@@ -15,8 +15,13 @@
 
 ```
 React SPA (Vite, port 5173) ←→ Spring Boot WebFlux (port 8080) ←→ PostgreSQL (port 5432)
-                                                                        ↓
-                                                                   用户自定义 AI API
+                                      ↓                        ↕
+                                ReAct Agent Engine        pgvector
+                                      ↓                   (语义搜索)
+                              AiProviderAdapter
+                                      ↓
+                              用户自定义 AI API
+                              (OpenAI / Claude / DeepSeek / ...)
 ```
 
 | 层 | 选型 | 理由 |
@@ -25,7 +30,9 @@ React SPA (Vite, port 5173) ←→ Spring Boot WebFlux (port 8080) ←→ Postgr
 | 后端 | Spring Boot 3.3 + WebFlux | 响应式流天然支持 SSE streaming |
 | 数据库 | PostgreSQL 16 + pgvector | 全文搜索 (tsvector)、JSONB、数组类型、向量存储 |
 | AI | 用户自定义（支持 Claude / OpenAI / DeepSeek 等） | 用户自己配置 API Key 和服务商 |
-| AI 编排 | Spring AI | 原生 Java RAG 支持、多模型适配、Embedding 集成 |
+| AI 编排 | Spring AI + ReAct Agent | 原生 Java RAG 支持、多模型适配、Embedding 集成、Function Calling |
+| AI 推理模式 | ReAct (Reasoning + Acting) | AI 自主决定工具调用策略，多轮推理优于单次 prompt |
+| AI 结构化输出 | Function Calling | 保证 JSON Schema 合规输出，消除解析重试 |
 | 认证 | Spring Security + JWT | 标准方案 |
 
 ---
@@ -71,18 +78,43 @@ GET    /api/providers                    — 获取支持的 provider 列表及�
 
 ### 后端适配层
 
-后端实现统一的 `AiProviderAdapter` 接口，适配不同服务商的 API 格式：
+后端实现统一的 `AiProviderAdapter` 接口，适配不同服务商的 API 格式。支持两种调用模式：
+
+**1. 普通流式对话** — 直接返回文本流
+**2. Function Calling（工具调用）** — AI 输出结构化函数调用，后端执行后返回结果，AI 继续推理（ReAct 循环）
 
 ```java
 public interface AiProviderAdapter {
+    // 普通流式对话
     Flux<String> streamCompletion(String systemPrompt, String userMessage, AiConfig config);
+
+    // 支持 Function Calling 的流式对话
+    Flux<AiChunk> streamWithTools(String systemPrompt, String userMessage,
+        List<AiFunction> tools, AiConfig config);
 }
+
+// AI 输出块 — 可以是文本、函数调用请求、或最终完成
+public record AiChunk(
+    AiChunkType type,       // TEXT / TOOL_CALL / DONE
+    String content,         // 文本内容（type=TEXT 时）
+    String functionName,    // 函数名（type=TOOL_CALL 时）
+    String arguments        // JSON 参数（type=TOOL_CALL 时）
+) {}
+
+// 定义 AI 可调用的工具
+public record AiFunction(
+    String name,
+    String description,
+    String parametersJsonSchema  // JSON Schema 格式
+) {}
 ```
 
 具体实现：
-- `OpenAiAdapter` — 兼容 OpenAI 格式（OpenAI、DeepSeek、Moonshot、通义千问等国内兼容服务）
-- `AnthropicAdapter` — Claude API 格式
+- `OpenAiAdapter` — 兼容 OpenAI 格式（OpenAI、DeepSeek、Moonshot、通义千问等国内兼容服务），使用 `tools` 参数
+- `AnthropicAdapter` — Claude API 格式，使用 `tool_use` blocks
 - `CustomAdapter` — 用户自定义 base_url，使用 OpenAI 兼容格式（大多数国产大模型都兼容）
+
+> **兼容性说明：** 不是所有模型都支持 Function Calling。后端会检测模型能力，不支持时自动降级为纯 prompt 方式（Skill 提取退化为 JSON 文本解析，Demo 生成退化为手动注入 RAG 上下文）。
 
 前端设置页提供 Provider 下拉选择，选择后自动填充默认 base_url，用户只需填 API Key 和选择模型。
 
@@ -239,17 +271,42 @@ GET    /api/frameworks/{slug}/links    — 框架下的文档链接
 GET    /api/links/search?q=useEffect   — 全文搜索，返回深链接 URL
 ```
 
-### Demo 生成（SSE 流式）
+### Demo 生成（SSE 流式 + ReAct）
 ```
 POST   /api/demos/generate             — 发送 prompt，流式返回代码+解释
-       请求体可选 kb_id 字段，关联知识库后 RAG 检索相关上下文注入 prompt
-       SSE events: metadata → code chunks → explanation chunks → done
+       请求体可选 kb_id 字段；不传时由 AI 自主决定是否检索知识库（ReAct 模式）
+       SSE events: thought → tool_call → tool_result → code chunks → explanation chunks → done
 GET    /api/demos                      — 历史 demo 列表
 GET    /api/demos/{id}                 — 单个 demo
 DELETE /api/demos/{id}                 — 删除 demo
 ```
 
-### Skills 构建（SSE 流式）
+**ReAct 工作流（Demo 生成时）：**
+
+```
+用户: "React useEffect 发起 API 请求"
+    ↓
+AI Thought: 用户需要 React 数据请求示例，先查一下知识库里有没有相关最佳实践
+    ↓
+AI Action: search_kb(query="useEffect API request", kb_id=xxx)
+    ↓
+后端执行: 返回知识库中相关代码片段
+    ↓
+AI Thought: 找到了相关模式，再确认一下 React 官方文档的用法
+    ↓
+AI Action: search_links(query="useEffect fetch data", framework="react")
+    ↓
+后端执行: 返回文档深链接
+    ↓
+AI Final: 综合知识库上下文和文档，生成最终代码 + 解释
+```
+
+AI 可用工具：
+- `search_kb` — 语义搜索用户的知识库
+- `search_links` — 全文搜索框架文档链接
+- `get_framework_info` — 获取框架的基本信息和常用模式
+
+### Skills 构建（SSE 流式 + Function Calling）
 ```
 POST   /api/skills/extract             — 自然语言描述 → 结构化工作流
 GET    /api/skills                     — 用户的 skills 列表
@@ -259,6 +316,46 @@ DELETE /api/skills/{id}                — 删除 skill
 POST   /api/skills/{id}/export         — 导出为 Claude Code .md 格式
 GET    /api/skills/{id}/export/download — 下载 .md 文件
 ```
+
+**Function Calling 保证结构化输出：**
+
+传统方式靠 prompt 约束 AI 输出 JSON，格式不稳定。改用 Function Calling，AI 必须按 schema 输出：
+
+```json
+{
+  "name": "extract_skill",
+  "description": "从用户描述中提取结构化工作流",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "description": "Skill 名称" },
+      "description": { "type": "string", "description": "一句话描述" },
+      "triggerDescription": { "type": "string", "description": "触发条件，以 Use when... 开头" },
+      "category": { "type": "string", "enum": ["frontend", "backend", "mobile", "devops", "other"] },
+      "steps": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "description": { "type": "string" },
+            "stepType": { "type": "string", "enum": ["action", "decision", "validation", "reference"] },
+            "codeTemplate": { "type": "string" },
+            "expectedOutput": { "type": "string" },
+            "notes": { "type": "string" }
+          },
+          "required": ["title", "description", "stepType"]
+        }
+      }
+    },
+    "required": ["name", "description", "triggerDescription", "steps"]
+  }
+}
+```
+
+AI 返回结构化 JSON → 后端直接反序列化为 `Skill` 对象 → 无需 JSON 解析重试。
+
+**降级方案：** 模型不支持 Function Calling 时，退化为 prompt + 正则提取，解析失败则重试（最多 2 次）。
 
 ### 知识库管理
 ```
@@ -325,23 +422,25 @@ Define Props interface and any local types...
 
 **交付物：** 搜索 "React useEffect"，看到结果卡片，点击跳转到 react.dev 对应锚点。
 
-### Phase 2: Demo 生成器
+### Phase 2: Demo 生成器 + ReAct 引擎
 
 **后端：**
-1. `AiProviderAdapter` 接口 + `OpenAiAdapter` / `AnthropicAdapter` 实现
-2. `user_ai_configs` 表和 CRUD 接口
-3. DemoController — `/api/demos/generate` 返回 SSE
-4. Demo 实体 + 仓库
-5. 前端设置页 — AI Provider 配置表单
+1. `AiProviderAdapter` 接口（含 Function Calling）+ `OpenAiAdapter` / `AnthropicAdapter` 实现
+2. `AiFunction`、`AiChunk` 数据模型
+3. `ReActAgent` — 多轮推理循环引擎（最多 3 轮工具调用）
+4. `user_ai_configs` 表和 CRUD 接口
+5. DemoController — `/api/demos/generate` 返回 SSE，注册 `search_kb` / `search_links` / `get_framework_info` 工具
+6. Demo 实体 + 仓库
+7. 前端设置页 — AI Provider 配置表单
 
 **前端：**
-1. useSSE hook
+1. useSSE hook（扩展支持 thought / tool_call / tool_result 事件类型）
 2. Settings 页面（Provider 选择、API Key 输入、模型选择、连通性测试）
 3. DemoGenerator 页面（输入框 + 框架/语言选择 + 生成按钮）
-4. StreamingOutput 实时渲染代码（语法高亮）
+4. StreamingOutput 实时渲染代码（语法高亮）+ ReAct 推理过程可视化
 5. CodeViewer（一键复制）
 
-**交付物：** 配置好自己的 AI API 后，输入 "React useEffect 发起 API 请求"，实时看到生成的 demo。
+**交付物：** 配置好自己的 AI API 后，输入 "React useEffect 发起 API 请求"，AI 自主搜索知识库和文档，实时看到推理过程和生成的 demo。
 
 ### Phase 3: 知识库（RAG）
 
@@ -361,12 +460,13 @@ Define Props interface and any local types...
 
 **交付物：** 上传几篇 React 最佳实践的 MD 文档，创建 demo 时选择该知识库，生成的代码风格与文档一致。
 
-### Phase 4: Skills 构建器
+### Phase 4: Skills 构建器（Function Calling）
 
 **后端：**
-1. Skill 提取 prompt（结构化 JSON 输出）
-2. SkillController — CRUD + 提取 + 导出
+1. 定义 `extract_skill` Function Calling schema（严格 JSON Schema 约束输出格式）
+2. SkillController — CRUD + 提取（调用 `streamWithTools`，AI 直接输出结构化 Skill）+ 导出
 3. SkillExportService — 生成 Claude Code .md 格式
+4. 降级方案：模型不支持 Function Calling 时，退化为 prompt + 正则解析 JSON
 
 **前端：**
 1. SkillEditor（文本域描述工作流 → AI 提取 → 可视化编辑步骤）
@@ -374,7 +474,7 @@ Define Props interface and any local types...
 3. SkillExportDialog（预览 .md、下载、复制）
 4. Skills 列表页
 
-**交付物：** 描述 "创建 React 组件的工作流"，得到结构化 skill，导出为 Claude Code 可用的 .md 文件。
+**交付物：** 描述 "创建 React 组件的工作流"，AI 通过 Function Calling 直接输出结构化 skill（无需 JSON 解析重试），导出为 Claude Code 可用的 .md 文件。
 
 ### Phase 5: 完善
 
@@ -470,10 +570,13 @@ D:\Dev\devknowledge\
 │       │   ├── KbService.java
 │       │   ├── EmbeddingService.java
 │       │   └── ai/
-│       │       ├── AiProviderAdapter.java       # 统一接口
+│       │       ├── AiProviderAdapter.java       # 统一接口（含 Function Calling）
+│       │       ├── AiFunction.java              # 工具定义（name + description + schema）
+│       │       ├── AiChunk.java                 # AI 输出块（TEXT / TOOL_CALL / DONE）
 │       │       ├── OpenAiAdapter.java           # OpenAI 兼容格式
 │       │       ├── AnthropicAdapter.java        # Claude 格式
-│       │       └── AiProviderFactory.java       # 根据 provider 类型创建 adapter
+│       │       ├── AiProviderFactory.java       # 根据 provider 类型创建 adapter
+│       │       └── ReActAgent.java              # ReAct 循环引擎（tool dispatch + 多轮推理）
 │       ├── model/
 │       │   ├── User.java
 │       │   ├── UserAiConfig.java
@@ -539,25 +642,115 @@ D:\Dev\devknowledge\
 ```
 
 ### SSE 流式传输（Spring Boot WebFlux）
+
+SSE 事件类型扩展，支持 ReAct 过程可视化：
+
 ```java
 @GetMapping(value = "/api/demos/generate", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
 public Flux<ServerSentEvent<String>> generateDemo(@RequestBody GenerateDemoRequest req) {
     UserAiConfig config = aiConfigRepository.findByUserId(getCurrentUserId());
-    AiProviderAdapter adapter = aiProviderFactory.getAdapter(config.getProvider());
-    return adapter.streamCompletion(systemPrompt, req.getPrompt(), config)
+
+    // 定义 AI 可用工具
+    List<AiFunction> tools = List.of(
+        new AiFunction("search_kb", "语义搜索知识库", kbSearchSchema),
+        new AiFunction("search_links", "搜索框架文档链接", linkSearchSchema),
+        new AiFunction("get_framework_info", "获取框架信息", frameworkInfoSchema)
+    );
+    Map<String, ToolHandler> handlers = Map.of(
+        "search_kb", args -> kbService.semanticSearch(parseKbId(args), parseQuery(args)),
+        "search_links", args -> knowledgeService.fullTextSearch(parseQuery(args)),
+        "get_framework_info", args -> knowledgeService.getFramework(parseSlug(args))
+    );
+
+    return reactAgent.run(systemPrompt, req.getPrompt(), tools, handlers, config)
         .map(chunk -> ServerSentEvent.builder(chunk).build());
 }
 ```
 
-### 统一 AI 适配层
+前端 SSE 事件类型：
+```
+event: thought     → AI 的推理过程（"让我先搜索知识库..."）
+event: tool_call   → 工具调用（显示 "正在搜索知识库..."）
+event: tool_result → 工具返回结果
+event: code        → 代码块
+event: explanation → 解释文本
+event: done        → 完成
+event: error       → 错误
+```
+
+### 统一 AI 适配层（支持 Function Calling）
 ```java
 public interface AiProviderAdapter {
+    // 普通流式对话
     Flux<String> streamCompletion(String systemPrompt, String userMessage, UserAiConfig config);
+
+    // Function Calling 流式对话
+    Flux<AiChunk> streamWithTools(String systemPrompt, String userMessage,
+        List<AiFunction> tools, UserAiConfig config);
 }
 
-// OpenAiAdapter — 兼容 OpenAI / DeepSeek / 通义千问等
-// AnthropicAdapter — Claude API
+// OpenAiAdapter — 兼容 OpenAI / DeepSeek / 通义千问等（tools 参数）
+// AnthropicAdapter — Claude API（tool_use blocks）
 // AiProviderFactory — 根据 config.provider 返回对应 adapter
+```
+
+### ReAct Agent 引擎
+
+```java
+@Service
+public class ReActAgent {
+
+    private static final int MAX_ITERATIONS = 3;
+
+    public Flux<String> run(String systemPrompt, String userMessage,
+            List<AiFunction> tools, Map<String, ToolHandler> handlers,
+            UserAiConfig config) {
+
+        AiProviderAdapter adapter = aiProviderFactory.getAdapter(config.getProvider());
+        List<Map<String, String>> conversation = new ArrayList<>();
+        conversation.add(Map.of("role", "system", "content", systemPrompt));
+        conversation.add(Map.of("role", "user", "content", userMessage));
+
+        return Flux.create(sink -> {
+            for (int i = 0; i < MAX_ITERATIONS; i++) {
+                List<AiChunk> chunks = adapter.streamWithTools(
+                    systemPrompt, userMessage, tools, config
+                ).collectList().block();
+
+                boolean hasToolCall = false;
+                for (AiChunk chunk : chunks) {
+                    if (chunk.type() == AiChunkType.TOOL_CALL) {
+                        hasToolCall = true;
+                        // 执行工具，将结果加入对话
+                        ToolHandler handler = handlers.get(chunk.functionName());
+                        String result = handler.apply(chunk.arguments());
+                        conversation.add(Map.of("role", "assistant",
+                            "content", "Calling " + chunk.functionName()));
+                        conversation.add(Map.of("role", "tool", "content", result));
+                    } else if (chunk.type() == AiChunkType.TEXT) {
+                        sink.next(chunk.content());
+                    }
+                }
+                if (!hasToolCall) break; // AI 输出最终答案，结束循环
+            }
+            sink.complete();
+        });
+    }
+}
+
+@FunctionalInterface
+interface ToolHandler {
+    String apply(String arguments);
+}
+```
+
+Demo 生成时注册工具：
+```java
+Map<String, ToolHandler> demoTools = Map.of(
+    "search_kb", args -> kbService.semanticSearch(parseKbId(args), parseQuery(args)),
+    "search_links", args -> knowledgeService.fullTextSearch(parseQuery(args)),
+    "get_framework_info", args -> knowledgeService.getFramework(parseSlug(args))
+);
 ```
 
 ### PostgreSQL 全文搜索
@@ -619,7 +812,10 @@ LIMIT 5;
 | 不同 AI 服务商 API 格式不一致 | 统一 Adapter 接口 + Factory 模式隔离差异 |
 | 用户 API Key 泄露风险 | AES 加密存储 + 前端脱敏展示 + HTTPS 传输 |
 | AI 响应延迟高 | SSE 流式传输缓解感知延迟，后端 120s 超时 |
-| Skill 提取 JSON 格式异常 | 解析失败时重试，prompt 中强调 JSON 格式要求 |
+| Skill 提取 JSON 格式异常 | Function Calling 保证结构化输出；不支持时退化为 prompt + 正则，最多重试 2 次 |
+| 部分模型不支持 Function Calling | 后端检测模型能力，自动降级为纯 prompt 模式；Provider 配置页标注能力标签 |
+| ReAct 循环超时或死循环 | 硬性限制最多 3 轮工具调用，每轮单独超时 30s，总计不超过 120s |
+| 工具调用结果过长截断 | search_kb / search_links 返回 top-3，每条结果限制 500 字符 |
 | 中文全文搜索效果差 | 后续加 pg_trgm 三元组搜索或 jieba 分词 |
 | WebFlux + JPA 阻塞 | Schedulers.boundedElastic() 包装，Phase 5 可迁 R2DBC |
 | Embedding API 调用成本/限流 | 分块异步处理，失败重试，展示处理进度 |
@@ -630,7 +826,13 @@ LIMIT 5;
 ## 验证方式
 
 1. **Phase 1：** 启动前后端，搜索 "useEffect"，确认返回结果且链接可跳转
-2. **Phase 2：** 配置 AI Provider 后生成 demo，确认流式显示、语法高亮、可复制
-3. **Phase 3：** 上传 MD 文档到知识库，语义搜索返回相关片段；生成 demo 时选择知识库，代码风格与文档一致
-4. **Phase 4：** 描述工作流提取 skill，确认步骤可编辑，导出 .md 符合 Claude Code 格式
+2. **Phase 2：** 配置 AI Provider 后生成 demo，确认：
+   - 流式显示、语法高亮、可复制
+   - AI 自主调用 `search_kb` / `search_links` 工具（SSE 中可见 thought / tool_call 事件）
+   - ReAct 推理过程在前端可视化展示
+3. **Phase 3：** 上传 MD 文档到知识库，语义搜索返回相关片段；生成 demo 时 AI 自动检索知识库，代码风格与文档一致
+4. **Phase 4：** 描述工作流提取 skill，确认：
+   - Function Calling 直接输出结构化 JSON（无解析重试）
+   - 降级测试：使用不支持 Function Calling 的模型，确认退化为 prompt 模式仍可工作
+   - 步骤可编辑，导出 .md 符合 Claude Code 格式
 5. 将导出的 .md 放入 `~/.claude/skills/` 后在 Claude Code 中用 `/skill-name` 验证可调用
