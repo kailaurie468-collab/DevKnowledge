@@ -1,0 +1,492 @@
+# DevKnowledge - 开发者知识平台
+
+## Context
+
+全栈开发者需要一个平台，解决三个痛点：
+1. 开发时查文档要到处找，且希望直接跳转到具体知识点
+2. 开发时需要某个知识点的 demo 示例，带解释
+3. 个人开发习惯和工作流无法沉淀为可复用的 skills
+
+目标用户：使用 Android、React、Java Spring 等框架的开发者。
+
+---
+
+## 技术架构
+
+```
+React SPA (Vite, port 5173) ←→ Spring Boot WebFlux (port 8080) ←→ PostgreSQL (port 5432)
+                                                                        ↓
+                                                                   用户自定义 AI API
+```
+
+| 层 | 选型 | 理由 |
+|---|---|---|
+| 前端 | Vite + React 19 + TypeScript + Tailwind | SPA 够用，不需要 SSR |
+| 后端 | Spring Boot 3.3 + WebFlux | 响应式流天然支持 SSE streaming |
+| 数据库 | PostgreSQL 16 | 全文搜索 (tsvector)、JSONB、数组类型 |
+| AI | 用户自定义（支持 Claude / OpenAI / DeepSeek 等） | 用户自己配置 API Key 和服务商 |
+| 认证 | Spring Security + JWT | 标准方案 |
+
+---
+
+## AI API 自定义设计
+
+### 核心理念
+
+平台不内置任何 AI 服务，用户在个人设置中配置自己的 AI Provider。
+
+### 用户配置项
+
+| 字段 | 说明 | 示例 |
+|---|---|---|
+| provider | AI 服务商类型 | `openai` / `anthropic` / `deepseek` / `custom` |
+| api_key | 用户的 API Key | `sk-xxx...` |
+| base_url | API 基础地址 | `https://api.openai.com/v1` 或自定义地址 |
+| model | 使用的模型名 | `gpt-4o` / `claude-sonnet-4-20250514` / `deepseek-chat` |
+| max_tokens | 最大输出 token 数 | `4096` |
+
+### 数据库表：`user_ai_configs`
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | UUID | PK |
+| user_id | UUID | FK -> users(id), UNIQUE |
+| provider | VARCHAR(50) | NOT NULL |
+| api_key | VARCHAR(500) | NOT NULL (加密存储) |
+| base_url | VARCHAR(500) | NOT NULL |
+| model | VARCHAR(100) | NOT NULL |
+| max_tokens | INTEGER | DEFAULT 4096 |
+| created_at | TIMESTAMPTZ | NOT NULL |
+| updated_at | TIMESTAMPTZ | NOT NULL |
+
+### API 接口
+
+```
+GET    /api/user/ai-config              — 获取当前用户的 AI 配置（api_key 脱敏返回）
+PUT    /api/user/ai-config              — 更新 AI 配置
+POST   /api/user/ai-config/test         — 测试配置是否可用（发送一个简单请求验证）
+GET    /api/providers                    — 获取支持的 provider 列表及其默认 base_url
+```
+
+### 后端适配层
+
+后端实现统一的 `AiProviderAdapter` 接口，适配不同服务商的 API 格式：
+
+```java
+public interface AiProviderAdapter {
+    Flux<String> streamCompletion(String systemPrompt, String userMessage, AiConfig config);
+}
+```
+
+具体实现：
+- `OpenAiAdapter` — 兼容 OpenAI 格式（OpenAI、DeepSeek、Moonshot、通义千问等国内兼容服务）
+- `AnthropicAdapter` — Claude API 格式
+- `CustomAdapter` — 用户自定义 base_url，使用 OpenAI 兼容格式（大多数国产大模型都兼容）
+
+前端设置页提供 Provider 下拉选择，选择后自动填充默认 base_url，用户只需填 API Key 和选择模型。
+
+---
+
+## 数据库设计（7 张核心表）
+
+### users
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | UUID | PK |
+| email | VARCHAR(255) | UNIQUE, NOT NULL |
+| password_hash | VARCHAR(255) | NOT NULL |
+| display_name | VARCHAR(100) | |
+| created_at | TIMESTAMPTZ | NOT NULL |
+| updated_at | TIMESTAMPTZ | NOT NULL |
+
+### user_ai_configs
+（见上方 AI 自定义设计）
+
+### frameworks
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | UUID | PK |
+| name | VARCHAR(100) | NOT NULL, UNIQUE |
+| slug | VARCHAR(100) | NOT NULL, UNIQUE |
+| base_url | VARCHAR(500) | NOT NULL |
+| icon_url | VARCHAR(500) | |
+| description | TEXT | |
+| category | VARCHAR(50) | NOT NULL (frontend/backend/mobile) |
+| created_at | TIMESTAMPTZ | NOT NULL |
+
+### knowledge_links
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | UUID | PK |
+| framework_id | UUID | FK -> frameworks(id) |
+| title | VARCHAR(300) | NOT NULL |
+| url | VARCHAR(1000) | NOT NULL |
+| anchor | VARCHAR(200) | 锚点，用于深链接 |
+| description | TEXT | |
+| tags | TEXT[] | PostgreSQL 数组 |
+| search_vector | TSVECTOR | GIN 索引 |
+| popularity_score | INTEGER | DEFAULT 0 |
+| created_at | TIMESTAMPTZ | NOT NULL |
+| updated_at | TIMESTAMPTZ | NOT NULL |
+
+### demos
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | UUID | PK |
+| user_id | UUID | FK -> users(id), nullable |
+| title | VARCHAR(300) | NOT NULL |
+| prompt | TEXT | NOT NULL |
+| framework_id | UUID | FK, nullable |
+| code_content | TEXT | NOT NULL |
+| explanation | TEXT | NOT NULL |
+| language | VARCHAR(50) | NOT NULL |
+| tags | TEXT[] | |
+| tokens_used | INTEGER | |
+| model_version | VARCHAR(50) | 记录用的哪个模型 |
+| created_at | TIMESTAMPTZ | NOT NULL |
+
+### skills
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | UUID | PK |
+| user_id | UUID | FK -> users(id), NOT NULL |
+| name | VARCHAR(200) | NOT NULL |
+| description | TEXT | NOT NULL |
+| category | VARCHAR(50) | |
+| framework_id | UUID | FK, nullable |
+| trigger_description | TEXT | NOT NULL |
+| exported_content | TEXT | Claude Code .md 内容 |
+| version | INTEGER | DEFAULT 1 |
+| is_public | BOOLEAN | DEFAULT false |
+| created_at | TIMESTAMPTZ | NOT NULL |
+| updated_at | TIMESTAMPTZ | NOT NULL |
+
+### skill_steps
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | UUID | PK |
+| skill_id | UUID | FK -> skills(id) ON DELETE CASCADE |
+| step_order | INTEGER | NOT NULL |
+| title | VARCHAR(200) | NOT NULL |
+| description | TEXT | NOT NULL |
+| step_type | VARCHAR(30) | action/decision/validation/reference |
+| code_template | TEXT | |
+| expected_output | TEXT | |
+| notes | TEXT | |
+
+UNIQUE(skill_id, step_order)
+
+---
+
+## API 设计
+
+### 认证
+```
+POST   /api/auth/register              — 注册
+POST   /api/auth/login                 — 登录，返回 JWT
+POST   /api/auth/refresh               — 刷新 token
+```
+
+### 用户 AI 配置
+```
+GET    /api/user/ai-config             — 获取配置（key 脱敏）
+PUT    /api/user/ai-config             — 更新配置
+POST   /api/user/ai-config/test        — 测试连通性
+GET    /api/providers                   — 支持的 provider 列表
+```
+
+### 知识模块
+```
+GET    /api/frameworks                 — 框架列表
+GET    /api/frameworks/{slug}/links    — 框架下的文档链接
+GET    /api/links/search?q=useEffect   — 全文搜索，返回深链接 URL
+```
+
+### Demo 生成（SSE 流式）
+```
+POST   /api/demos/generate             — 发送 prompt，流式返回代码+解释
+       SSE events: metadata → code chunks → explanation chunks → done
+GET    /api/demos                      — 历史 demo 列表
+GET    /api/demos/{id}                 — 单个 demo
+DELETE /api/demos/{id}                 — 删除 demo
+```
+
+### Skills 构建（SSE 流式）
+```
+POST   /api/skills/extract             — 自然语言描述 → 结构化工作流
+GET    /api/skills                     — 用户的 skills 列表
+GET    /api/skills/{id}                — 单个 skill（含步骤）
+PUT    /api/skills/{id}                — 编辑 skill
+DELETE /api/skills/{id}                — 删除 skill
+POST   /api/skills/{id}/export         — 导出为 Claude Code .md 格式
+GET    /api/skills/{id}/export/download — 下载 .md 文件
+```
+
+---
+
+## Claude Code Skill 导出格式
+
+```markdown
+---
+name: create-react-component
+description: Use when creating a new React component with TypeScript types and tests
+---
+
+# Create React Component
+
+## Overview
+Standard workflow for creating a new React component...
+
+## Steps
+
+### Step 1: Create component file
+Create the .tsx file with the component skeleton...
+
+### Step 2: Add TypeScript types
+Define Props interface and any local types...
+...
+```
+
+`description` 字段遵循 CSO 原则：以 "Use when..." 开头，只描述触发条件。
+
+---
+
+## 分阶段实施
+
+### Phase 1: 基础框架 + 知识搜索 (MVP)
+
+**后端：**
+1. 初始化 Spring Boot 项目（WebFlux, JPA, Security, PostgreSQL, Flyway）
+2. Docker Compose 启动 PostgreSQL
+3. Flyway 迁移：users, frameworks, knowledge_links
+4. 实现 KnowledgeController 全文搜索接口
+5. 种子数据：3-5 个框架（React, Spring Boot, Android），20-30 条知识链接
+6. JWT 认证（注册/登录）
+
+**前端：**
+1. Vite + React + TypeScript + Tailwind 项目初始化
+2. 路由：`/` `/knowledge` `/demos` `/skills` `/login` `/settings`
+3. Layout（Header + 侧边栏）
+4. SearchBar 组件（防抖搜索）
+5. FrameworkGrid + LinkCard（点击在新标签页打开深链接）
+6. API 客户端 + JWT 拦截器
+
+**交付物：** 搜索 "React useEffect"，看到结果卡片，点击跳转到 react.dev 对应锚点。
+
+### Phase 2: Demo 生成器
+
+**后端：**
+1. `AiProviderAdapter` 接口 + `OpenAiAdapter` / `AnthropicAdapter` 实现
+2. `user_ai_configs` 表和 CRUD 接口
+3. DemoController — `/api/demos/generate` 返回 SSE
+4. Demo 实体 + 仓库
+5. 前端设置页 — AI Provider 配置表单
+
+**前端：**
+1. useSSE hook
+2. Settings 页面（Provider 选择、API Key 输入、模型选择、连通性测试）
+3. DemoGenerator 页面（输入框 + 框架/语言选择 + 生成按钮）
+4. StreamingOutput 实时渲染代码（语法高亮）
+5. CodeViewer（一键复制）
+
+**交付物：** 配置好自己的 AI API 后，输入 "React useEffect 发起 API 请求"，实时看到生成的 demo。
+
+### Phase 3: Skills 构建器
+
+**后端：**
+1. Skill 提取 prompt（结构化 JSON 输出）
+2. SkillController — CRUD + 提取 + 导出
+3. SkillExportService — 生成 Claude Code .md 格式
+
+**前端：**
+1. SkillEditor（文本域描述工作流 → AI 提取 → 可视化编辑步骤）
+2. SkillStepsList（步骤列表，支持拖拽排序）
+3. SkillExportDialog（预览 .md、下载、复制）
+4. Skills 列表页
+
+**交付物：** 描述 "创建 React 组件的工作流"，得到结构化 skill，导出为 Claude Code 可用的 .md 文件。
+
+### Phase 4: 完善
+
+- 更多框架种子数据（Vue, Angular, Kotlin, Swift, Django 等）
+- 分页、加载态、错误处理
+- 搜索缓存（Caffeine）
+- OpenAPI 文档
+- 公共 demo/skill 画廊
+
+---
+
+## 项目目录结构
+
+```
+D:\Dev\devknowledge\
+├── frontend/
+│   ├── package.json
+│   ├── vite.config.ts
+│   ├── tsconfig.json
+│   ├── src/
+│   │   ├── main.tsx
+│   │   ├── App.tsx
+│   │   ├── api/
+│   │   │   ├── client.ts              # fetch 封装 + JWT 拦截器
+│   │   │   ├── knowledge.ts
+│   │   │   ├── demos.ts               # SSE 处理
+│   │   │   ├── skills.ts
+│   │   │   ├── auth.ts
+│   │   │   └── settings.ts            # AI 配置接口
+│   │   ├── components/
+│   │   │   ├── layout/
+│   │   │   │   ├── Header.tsx
+│   │   │   │   ├── Sidebar.tsx
+│   │   │   │   └── Layout.tsx
+│   │   │   ├── knowledge/
+│   │   │   │   ├── FrameworkGrid.tsx
+│   │   │   │   ├── LinkCard.tsx
+│   │   │   │   └── SearchBar.tsx
+│   │   │   ├── demos/
+│   │   │   │   ├── DemoGenerator.tsx
+│   │   │   │   ├── CodeViewer.tsx
+│   │   │   │   └── StreamingOutput.tsx
+│   │   │   ├── skills/
+│   │   │   │   ├── SkillEditor.tsx
+│   │   │   │   ├── SkillStepsList.tsx
+│   │   │   │   └── SkillExportDialog.tsx
+│   │   │   └── settings/
+│   │   │       └── AiConfigForm.tsx    # AI Provider 配置表单
+│   │   ├── pages/
+│   │   │   ├── HomePage.tsx
+│   │   │   ├── KnowledgePage.tsx
+│   │   │   ├── DemoPage.tsx
+│   │   │   ├── SkillsPage.tsx
+│   │   │   ├── LoginPage.tsx
+│   │   │   └── SettingsPage.tsx
+│   │   ├── hooks/
+│   │   │   ├── useSSE.ts
+│   │   │   └── useAuth.ts
+│   │   ├── stores/
+│   │   │   └── authStore.ts
+│   │   └── types/
+│   │       └── api.ts
+│   └── index.html
+│
+├── backend/
+│   ├── pom.xml
+│   └── src/main/java/com/devknowledge/
+│       ├── DevKnowledgeApplication.java
+│       ├── config/
+│       │   ├── SecurityConfig.java
+│       │   ├── CorsConfig.java
+│       │   └── AiProviderConfig.java
+│       ├── controller/
+│       │   ├── AuthController.java
+│       │   ├── KnowledgeController.java
+│       │   ├── DemoController.java
+│       │   ├── SkillController.java
+│       │   └── SettingsController.java
+│       ├── service/
+│       │   ├── AuthService.java
+│       │   ├── KnowledgeService.java
+│       │   ├── DemoService.java
+│       │   ├── SkillService.java
+│       │   ├── SkillExportService.java
+│       │   └── ai/
+│       │       ├── AiProviderAdapter.java       # 统一接口
+│       │       ├── OpenAiAdapter.java           # OpenAI 兼容格式
+│       │       ├── AnthropicAdapter.java        # Claude 格式
+│       │       └── AiProviderFactory.java       # 根据 provider 类型创建 adapter
+│       ├── model/
+│       │   ├── User.java
+│       │   ├── UserAiConfig.java
+│       │   ├── Framework.java
+│       │   ├── KnowledgeLink.java
+│       │   ├── Demo.java
+│       │   ├── Skill.java
+│       │   └── SkillStep.java
+│       ├── repository/
+│       │   ├── UserRepository.java
+│       │   ├── UserAiConfigRepository.java
+│       │   ├── FrameworkRepository.java
+│       │   ├── KnowledgeLinkRepository.java
+│       │   ├── DemoRepository.java
+│       │   └── SkillRepository.java
+│       ├── dto/
+│       │   ├── request/
+│       │   │   ├── LoginRequest.java
+│       │   │   ├── RegisterRequest.java
+│       │   │   ├── GenerateDemoRequest.java
+│       │   │   ├── ExtractSkillRequest.java
+│       │   │   └── AiConfigRequest.java
+│       │   └── response/
+│       │       ├── AuthResponse.java
+│       │       ├── LinkSearchResult.java
+│       │       ├── DemoResponse.java
+│       │       ├── SkillResponse.java
+│       │       └── AiConfigResponse.java
+│       └── security/
+│           ├── JwtTokenProvider.java
+│           └── JwtAuthenticationFilter.java
+│
+├── docker-compose.yml
+├── .env.example
+└── README.md
+```
+
+---
+
+## 关键技术实现
+
+### SSE 流式传输（Spring Boot WebFlux）
+```java
+@GetMapping(value = "/api/demos/generate", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+public Flux<ServerSentEvent<String>> generateDemo(@RequestBody GenerateDemoRequest req) {
+    UserAiConfig config = aiConfigRepository.findByUserId(getCurrentUserId());
+    AiProviderAdapter adapter = aiProviderFactory.getAdapter(config.getProvider());
+    return adapter.streamCompletion(systemPrompt, req.getPrompt(), config)
+        .map(chunk -> ServerSentEvent.builder(chunk).build());
+}
+```
+
+### 统一 AI 适配层
+```java
+public interface AiProviderAdapter {
+    Flux<String> streamCompletion(String systemPrompt, String userMessage, UserAiConfig config);
+}
+
+// OpenAiAdapter — 兼容 OpenAI / DeepSeek / 通义千问等
+// AnthropicAdapter — Claude API
+// AiProviderFactory — 根据 config.provider 返回对应 adapter
+```
+
+### PostgreSQL 全文搜索
+```sql
+ALTER TABLE knowledge_links ADD COLUMN search_vector tsvector
+  GENERATED ALWAYS AS (
+    to_tsvector('english', coalesce(title,'') || ' ' || coalesce(description,'') || ' ' || array_to_string(tags,' '))
+  ) STORED;
+CREATE INDEX idx_search ON knowledge_links USING GIN (search_vector);
+```
+
+### API Key 加密存储
+用户配置的 API Key 使用 AES 加密后存入数据库，前端展示时脱敏（只显示前 4 位 + 后 4 位）。
+
+---
+
+## 风险与应对
+
+| 风险 | 应对 |
+|---|---|
+| 不同 AI 服务商 API 格式不一致 | 统一 Adapter 接口 + Factory 模式隔离差异 |
+| 用户 API Key 泄露风险 | AES 加密存储 + 前端脱敏展示 + HTTPS 传输 |
+| AI 响应延迟高 | SSE 流式传输缓解感知延迟，后端 120s 超时 |
+| Skill 提取 JSON 格式异常 | 解析失败时重试，prompt 中强调 JSON 格式要求 |
+| 中文全文搜索效果差 | 后续加 pg_trgm 三元组搜索或 jieba 分词 |
+| WebFlux + JPA 阻塞 | Schedulers.boundedElastic() 包装，Phase 4 可迁 R2DBC |
+
+---
+
+## 验证方式
+
+1. **Phase 1：** 启动前后端，搜索 "useEffect"，确认返回结果且链接可跳转
+2. **Phase 2：** 配置 AI Provider 后生成 demo，确认流式显示、语法高亮、可复制
+3. **Phase 3：** 描述工作流提取 skill，确认步骤可编辑，导出 .md 符合 Claude Code 格式
+4. 将导出的 .md 放入 `~/.claude/skills/` 后在 Claude Code 中用 `/skill-name` 验证可调用
