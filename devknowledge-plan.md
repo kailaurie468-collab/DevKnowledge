@@ -243,6 +243,166 @@ UNIQUE(skill_id, step_order)
 
 CREATE INDEX ON kb_chunks USING ivfflat (embedding vector_cosine_ops);
 
+### 用户行为数据存储
+
+行为数据支持两种存储模式，用户在设置页自选：
+
+#### 模式 1：本地文件存储（File System Access API，默认推荐）
+
+```
+用户操作 → 前端提取关键词摘要 → 写入本地 JSONL 文件
+    ↓
+触发推荐时 → 前端读取本地文件 → 前端聚类 → 发送摘要到后端
+    ↓
+后端调用 AI → 返回推荐 Skill
+```
+
+**技术实现：**
+
+```javascript
+// 前端 ActivityStorage — File System Access API
+class LocalActivityStorage {
+  private dirHandle: FileSystemDirectoryHandle | null = null
+
+  // 用户授权选择目录（只需一次，浏览器持久记住）
+  async init(): Promise<boolean> {
+    try {
+      this.dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' })
+      // 保存目录名称到 IndexedDB 以便下次自动恢复权限
+      const db = await openDB('devknowledge', 1)
+      await db.put('config', this.dirHandle.name, 'activityDirName')
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  // 恢复已授权的目录（页面刷新后）
+  async restore(): Promise<boolean> {
+    const db = await openDB('devknowledge', 1)
+    const dirName = await db.get('config', 'activityDirName')
+    if (!dirName) return false
+    // 浏览器会自动检查是否仍有权限
+    // 如果权限过期，会在首次写入时提示用户重新授权
+    return true
+  }
+
+  // 追加一条活动记录（只存摘要，不存原始 prompt）
+  async record(activity: ActivitySummary): Promise<void> {
+    const date = new Date().toISOString().slice(0, 10) // 2026-05-01
+    const fileName = `activities-${date}.jsonl`
+    const fileHandle = await this.dirHandle!.getFileHandle(fileName, { create: true })
+    const writable = await fileHandle.createWritable({ keepExisting: true })
+    await writable.seek(writable.size) // 追加到末尾
+    await writable.write(JSON.stringify(activity) + '\n')
+    await writable.close()
+  }
+
+  // 读取近 N 天的活动数据
+  async readRecent(days: number): Promise<ActivitySummary[]> {
+    const activities: ActivitySummary[] = []
+    for (let i = 0; i < days; i++) {
+      const date = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10)
+      const fileName = `activities-${date}.jsonl`
+      try {
+        const fileHandle = await this.dirHandle!.getFileHandle(fileName)
+        const file = await fileHandle.getFile()
+        const text = await file.text()
+        text.trim().split('\n').forEach(line => {
+          if (line) activities.push(JSON.parse(line))
+        })
+      } catch { /* 文件不存在，跳过 */ }
+    }
+    return activities
+  }
+
+  // 清理过期数据
+  async cleanup(keepDays: number): Promise<void> {
+    const cutoff = new Date(Date.now() - keepDays * 86400000).toISOString().slice(0, 10)
+    for await (const entry of this.dirHandle!.values()) {
+      if (entry.name.startsWith('activities-') && entry.name.endsWith('.jsonl')) {
+        const date = entry.name.replace('activities-', '').replace('.jsonl', '')
+        if (date < cutoff) await this.dirHandle!.removeEntry(entry.name)
+      }
+    }
+  }
+}
+```
+
+**本地 JSONL 文件格式（每行一条）：**
+
+```jsonl
+{"type":"demo_generate","framework":"react","keywords":["表单","验证","组件"],"language":"ts","ts":1714500000}
+{"type":"kb_search","keywords":["useEffect","清理"],"resultCount":3,"ts":1714500100}
+{"type":"link_click","framework":"react","keywords":["hooks","effect"],"ts":1714500200}
+```
+
+每条 ~150-200 字节，只存关键词摘要，不存原始 prompt 全文。
+
+#### 模式 2：云端存储（可选）
+
+用户选择上传到服务器时，使用 `user_activities` 表：
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | UUID | PK |
+| user_id | UUID | FK -> users(id), NOT NULL |
+| action_type | VARCHAR(30) | NOT NULL |
+| keywords | TEXT[] | NOT NULL — 提取后的关键词（不存原始 prompt） |
+| framework_id | UUID | FK, nullable |
+| language | VARCHAR(30) | |
+| created_at | TIMESTAMPTZ | NOT NULL |
+
+CREATE INDEX idx_activities_user_time ON user_activities (user_id, created_at DESC);
+
+> **注意：** 云端模式同样只存关键词摘要，不存原始 prompt 全文。每条 ~100-150 字节。
+
+#### 存储估算
+
+| 指标 | 值 |
+|---|---|
+| 每条记录大小 | ~150-200 字节（本地） / ~100-150 字节（云端） |
+| 日均记录数 | ~30 条 |
+| 日均存储 | ~5KB/用户 |
+| 30 天存储 | ~150KB/用户 |
+| 1000 用户（云端） | ~150MB |
+
+#### 存储配置 API
+
+```
+GET    /api/user/activity-config          — 获取存储配置
+PUT    /api/user/activity-config          — 更新存储配置
+POST   /api/user/activity-config/check    — 检查本地目录权限状态
+```
+
+**activity_config 数据库表：**
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | UUID | PK |
+| user_id | UUID | FK -> users(id), UNIQUE |
+| storage_mode | VARCHAR(20) | NOT NULL DEFAULT 'local' (local / cloud) |
+| local_dir_name | VARCHAR(200) | 用户选择的本地目录名（用于恢复权限） |
+| keep_days | INTEGER | DEFAULT 30 (7/14/30/90) |
+| created_at | TIMESTAMPTZ | NOT NULL |
+| updated_at | TIMESTAMPTZ | NOT NULL |
+
+### skill_suggestions（AI 推荐的候选 Skill）
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | UUID | PK |
+| user_id | UUID | FK -> users(id), NOT NULL |
+| name | VARCHAR(200) | NOT NULL |
+| description | TEXT | NOT NULL |
+| trigger_description | TEXT | NOT NULL |
+| category | VARCHAR(50) | |
+| suggested_steps | JSONB | NOT NULL — AI 生成的步骤列表 |
+| source_summary | TEXT | NOT NULL — 基于哪些活动生成的（供用户参考） |
+| source_activity_ids | UUID[] | 关联的活动 ID |
+| status | VARCHAR(20) | DEFAULT 'pending' (pending / accepted / dismissed) |
+| created_at | TIMESTAMPTZ | NOT NULL |
+| updated_at | TIMESTAMPTZ | NOT NULL |
+
 ---
 
 ## API 设计
@@ -315,6 +475,120 @@ PUT    /api/skills/{id}                — 编辑 skill
 DELETE /api/skills/{id}                — 删除 skill
 POST   /api/skills/{id}/export         — 导出为 Claude Code .md 格式
 GET    /api/skills/{id}/export/download — 下载 .md 文件
+```
+
+### Skills 智能推荐（基于用户行为分析）
+```
+GET    /api/skills/suggestions         — 获取 AI 推荐的候选 Skills 列表
+POST   /api/skills/suggestions/refresh — 手动触发重新分析（默认每天自动运行一次）
+PUT    /api/skills/suggestions/{id}    — 编辑候选 Skill（用户可修改名称/描述/步骤）
+POST   /api/skills/suggestions/{id}/accept  — 确认采纳 → 转为正式 Skill
+POST   /api/skills/suggestions/{id}/dismiss — 忽略推荐
+```
+
+**智能推荐工作流（双模式）：**
+
+```
+用户日常使用平台（生成 Demo、搜索文档、提取 Skill）
+    ↓
+记录行为事件（只存关键词摘要，不存原始 prompt）
+    ├─ 本地模式：写入本地 JSONL 文件（File System Access API）
+    └─ 云端模式：写入 user_activities 表（异步，线程池）
+    ↓
+触发推荐（每天定时 / 用户手动点击"刷新推荐"）
+    ↓
+┌─ 本地模式 ─────────────────────────────────────┐
+│  前端 LocalActivityStorage.readRecent(7)        │
+│  → 前端聚类分析（按 framework + 关键词）          │
+│  → 将聚类摘要 POST 到后端                       │
+└─────────────────────────────────────────────────┘
+┌─ 云端模式 ─────────────────────────────────────┐
+│  后端 ActivityAnalysisService                   │
+│  → 查询 user_activities 近 7 天                 │
+│  → 后端聚类分析                                  │
+└─────────────────────────────────────────────────┘
+    ↓
+调用 AI（Function Calling）→ extract_suggested_skill
+  输入：聚类后的活动摘要（关键词 + framework + 频次）
+  输出：结构化 Skill（name / description / steps）
+    ↓
+写入 skill_suggestions 表（status=pending）
+    ↓
+前端 Skills 页面"推荐"Tab 展示候选
+    ↓
+用户可以：
+  - 查看推荐详情和来源活动摘要
+  - 直接编辑名称、描述、步骤
+  - 确认采纳 → 转为正式 Skill
+  - 忽略推荐（不再重复）
+```
+
+**聚类策略：**
+- 主维度：framework_id（同框架的操作自然聚集）
+- 次维度：prompt 关键词提取（TF-IDF 或简单的名词短语提取）
+- 阈值：同一聚类内至少 3 条活动记录
+- 时间窗口：默认 7 天，可配置 7 / 14 / 30 天
+
+**示例：**
+
+用户近 7 天的 Demo 生成记录：
+| # | prompt | framework | 时间 |
+|---|--------|-----------|------|
+| 1 | React 表单组件 + 表单验证 | react | 3 天前 |
+| 2 | React 受控输入组件 + TypeScript 类型 | react | 3 天前 |
+| 3 | React useForm Hook + 错误处理 | react | 2 天前 |
+| 4 | React 表单提交 + loading 状态 | react | 1 天前 |
+| 5 | React 动态表单字段 | react | 今天 |
+
+→ 聚类结果：5 条记录，framework=react，关键词=[表单, React, 组件, 验证, 输入]
+→ AI 推荐 Skill：
+
+```json
+{
+  "name": "创建 React 表单组件",
+  "description": "使用受控组件模式创建带验证、错误处理和提交状态的 React 表单",
+  "triggerDescription": "Use when creating a React form component with validation, error handling, and submit logic",
+  "category": "frontend",
+  "steps": [
+    {"title": "定义表单类型", "description": "创建 FormData 和 FormErrors TypeScript 接口", "stepType": "action"},
+    {"title": "创建表单组件骨架", "description": "使用 useState 管理表单状态和错误状态", "stepType": "action"},
+    {"title": "实现验证逻辑", "description": "编写 validate 函数，返回错误对象", "stepType": "action"},
+    {"title": "处理表单提交", "description": "实现 onSubmit，包含 loading 状态和错误处理", "stepType": "action"},
+    {"title": "添加表单 UI", "description": "渲染输入框、错误提示、提交按钮", "stepType": "action"}
+  ]
+}
+```
+
+**Function Calling Schema（提取推荐 Skill）：**
+
+```json
+{
+  "name": "extract_suggested_skill",
+  "description": "从用户行为模式中提取推荐的工作流 Skill",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" },
+      "description": { "type": "string" },
+      "triggerDescription": { "type": "string" },
+      "category": { "type": "string", "enum": ["frontend", "backend", "mobile", "devops", "other"] },
+      "steps": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "description": { "type": "string" },
+            "stepType": { "type": "string", "enum": ["action", "decision", "validation", "reference"] }
+          },
+          "required": ["title", "description", "stepType"]
+        }
+      },
+      "reasoning": { "type": "string", "description": "为什么推荐这个 Skill，基于哪些行为模式" }
+    },
+    "required": ["name", "description", "triggerDescription", "steps", "reasoning"]
+  }
+}
 ```
 
 **Function Calling 保证结构化输出：**
@@ -460,21 +734,31 @@ Define Props interface and any local types...
 
 **交付物：** 上传几篇 React 最佳实践的 MD 文档，创建 demo 时选择该知识库，生成的代码风格与文档一致。
 
-### Phase 4: Skills 构建器（Function Calling）
+### Phase 4: Skills 构建器 + 智能推荐（Function Calling）
 
 **后端：**
-1. 定义 `extract_skill` Function Calling schema（严格 JSON Schema 约束输出格式）
+1. 定义 `extract_skill` / `extract_suggested_skill` Function Calling schema
 2. SkillController — CRUD + 提取（调用 `streamWithTools`，AI 直接输出结构化 Skill）+ 导出
 3. SkillExportService — 生成 Claude Code .md 格式
-4. 降级方案：模型不支持 Function Calling 时，退化为 prompt + 正则解析 JSON
+4. `user_activities` 表 + `ActivityRecordService`（异步写入，独立线程池）
+5. `activity_config` 表 + ActivityConfigController（存储模式配置）
+6. `skill_suggestions` 表 + SkillSuggestionController（CRUD + accept / dismiss）
+7. `ActivityAnalysisService` — 云端模式聚类分析 + 调用 AI 生成推荐 Skill
+8. 定时任务：每天凌晨分析近 7 天活动（仅云端模式）
+9. 降级方案：模型不支持 Function Calling 时，退化为 prompt + 正则解析 JSON
 
 **前端：**
 1. SkillEditor（文本域描述工作流 → AI 提取 → 可视化编辑步骤）
 2. SkillStepsList（步骤列表，支持拖拽排序）
 3. SkillExportDialog（预览 .md、下载、复制）
-4. Skills 列表页
+4. Skills 列表页 — 分"我的 Skills"和"推荐"两个 Tab
+5. SkillSuggestionCard — 展示推荐详情、来源活动摘要、采纳/忽略按钮
+6. 采纳前支持编辑：名称、描述、步骤均可修改后再确认
+7. `LocalActivityStorage` — File System Access API 封装（本地 JSONL 读写）
+8. 本地模式下的前端聚类分析逻辑
+9. Settings 页面 — 数据存储位置选择（本地目录 / 云端）
 
-**交付物：** 描述 "创建 React 组件的工作流"，AI 通过 Function Calling 直接输出结构化 skill（无需 JSON 解析重试），导出为 Claude Code 可用的 .md 文件。
+**交付物：** 使用平台一周后，Skills 页面自动出现"推荐"区域，展示基于近期操作模式提取的候选 Skill。用户可查看来源、编辑内容后采纳，或忽略推荐。数据默认存储在用户本地目录，不上传服务器。
 
 ### Phase 5: 完善
 
@@ -521,7 +805,8 @@ D:\Dev\devknowledge\
 │   │   │   ├── skills/
 │   │   │   │   ├── SkillEditor.tsx
 │   │   │   │   ├── SkillStepsList.tsx
-│   │   │   │   └── SkillExportDialog.tsx
+│   │   │   │   ├── SkillExportDialog.tsx
+│   │   │   │   └── SkillSuggestionCard.tsx  # 推荐 Skill 卡片
 │   │   │   ├── kb/
 │   │   │   │   ├── KbList.tsx
 │   │   │   │   ├── KbDetail.tsx
@@ -542,6 +827,8 @@ D:\Dev\devknowledge\
 │   │   │   └── useAuth.ts
 │   │   ├── stores/
 │   │   │   └── authStore.ts
+│   │   ├── storage/
+│   │   │   └── LocalActivityStorage.ts     # File System Access API 封装（本地 JSONL 读写）
 │   │   └── types/
 │   │       └── api.ts
 │   └── index.html
@@ -553,12 +840,15 @@ D:\Dev\devknowledge\
 │       ├── config/
 │       │   ├── SecurityConfig.java
 │       │   ├── CorsConfig.java
-│       │   └── AiProviderConfig.java
+│       │   ├── AiProviderConfig.java
+│       │   └── AsyncConfig.java               # 活动记录异步线程池
 │       ├── controller/
 │       │   ├── AuthController.java
 │       │   ├── KnowledgeController.java
 │       │   ├── DemoController.java
 │       │   ├── SkillController.java
+│       │   ├── SkillSuggestionController.java  # 推荐 Skill CRUD + accept/dismiss
+│       │   ├── ActivityConfigController.java   # 存储模式配置 + 目录权限检查
 │       │   ├── SettingsController.java
 │       │   └── KbController.java
 │       ├── service/
@@ -567,6 +857,9 @@ D:\Dev\devknowledge\
 │       │   ├── DemoService.java
 │       │   ├── SkillService.java
 │       │   ├── SkillExportService.java
+│       │   ├── SkillSuggestionService.java    # 推荐 Skill 管理
+│       │   ├── ActivityAnalysisService.java   # 行为聚类分析 + AI 提取推荐
+│       │   ├── ActivityRecordService.java     # 活动记录写入
 │       │   ├── KbService.java
 │       │   ├── EmbeddingService.java
 │       │   └── ai/
@@ -587,7 +880,10 @@ D:\Dev\devknowledge\
 │       │   ├── SkillStep.java
 │       │   ├── KnowledgeBase.java
 │       │   ├── KbDocument.java
-│       │   └── KbChunk.java
+│       │   ├── KbChunk.java
+│       │   ├── UserActivity.java              # 用户行为事件
+│       │   ├── SkillSuggestion.java           # 推荐候选 Skill
+│       │   └── ActivityConfig.java            # 用户存储配置（本地/云端）
 │       ├── repository/
 │       │   ├── UserRepository.java
 │       │   ├── UserAiConfigRepository.java
@@ -597,7 +893,10 @@ D:\Dev\devknowledge\
 │       │   ├── SkillRepository.java
 │       │   ├── KnowledgeBaseRepository.java
 │       │   ├── KbDocumentRepository.java
-│       │   └── KbChunkRepository.java
+│       │   ├── KbChunkRepository.java
+│       │   ├── UserActivityRepository.java
+│       │   ├── SkillSuggestionRepository.java
+│       │   └── ActivityConfigRepository.java
 │       ├── dto/
 │       │   ├── request/
 │       │   │   ├── LoginRequest.java
@@ -610,6 +909,7 @@ D:\Dev\devknowledge\
 │       │       ├── LinkSearchResult.java
 │       │       ├── DemoResponse.java
 │       │       ├── SkillResponse.java
+│       │       ├── SkillSuggestionResponse.java  # 推荐 Skill 响应（含来源摘要）
 │       │       └── AiConfigResponse.java
 │       └── security/
 │           ├── JwtTokenProvider.java
@@ -765,6 +1065,45 @@ CREATE INDEX idx_search ON knowledge_links USING GIN (search_vector);
 ### API Key 加密存储
 用户配置的 API Key 使用 AES 加密后存入数据库，前端展示时脱敏（只显示前 4 位 + 后 4 位）。
 
+### 异步活动记录线程池
+
+活动记录不阻塞主流程，使用独立线程池异步写入：
+
+```java
+@Configuration
+@EnableAsync
+public class AsyncConfig {
+    @Bean("activityExecutor")
+    public Executor activityExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("activity-");
+        executor.setRejectedExecutionHandler(new CallerRunsPolicy());
+        executor.initialize();
+        return executor;
+    }
+}
+
+@Service
+public class ActivityRecordService {
+    @Async("activityExecutor")
+    @Transactional
+    public void recordActivity(String actionType, UUID userId,
+            String[] keywords, UUID frameworkId, String language) {
+        UserActivity activity = new UserActivity();
+        activity.setUserId(userId);
+        activity.setActionType(actionType);
+        activity.setKeywords(keywords);
+        activity.setFrameworkId(frameworkId);
+        activity.setLanguage(language);
+        activity.setCreatedAt(Instant.now());
+        activityRepository.save(activity);
+    }
+}
+```
+
 ### 知识库 RAG 流程（Spring AI + pgvector）
 
 ```java
@@ -820,6 +1159,9 @@ LIMIT 5;
 | WebFlux + JPA 阻塞 | Schedulers.boundedElastic() 包装，Phase 5 可迁 R2DBC |
 | Embedding API 调用成本/限流 | 分块异步处理，失败重试，展示处理进度 |
 | pgvector 大规模数据性能 | ivfflat 索引 + 按 kb_id 分区，数据量大时考虑 HNSW 索引 |
+| 推荐 Skill 质量不高 | 聚类阈值≥3 条相似行为；用户可编辑后再采纳；忽略后不再重复推荐 |
+| 行为数据量不足无法聚类 | 新用户 7 天内不触发推荐；数据不足时静默跳过，不报错 |
+| 活动记录影响写入性能 | 异步写入（消息队列或 @Async），不阻塞主流程 |
 
 ---
 
@@ -835,4 +1177,9 @@ LIMIT 5;
    - Function Calling 直接输出结构化 JSON（无解析重试）
    - 降级测试：使用不支持 Function Calling 的模型，确认退化为 prompt 模式仍可工作
    - 步骤可编辑，导出 .md 符合 Claude Code 格式
-5. 将导出的 .md 放入 `~/.claude/skills/` 后在 Claude Code 中用 `/skill-name` 验证可调用
+5. **Phase 4 智能推荐：** 使用平台一周后，确认：
+   - Skills 页面"推荐"Tab 出现基于近期行为的候选 Skill
+   - 推荐内容可编辑（名称、描述、步骤）
+   - 采纳后转为正式 Skill，忽略后不再重复推荐
+   - 来源活动摘要可查看，推荐理由清晰
+6. 将导出的 .md 放入 `~/.claude/skills/` 后在 Claude Code 中用 `/skill-name` 验证可调用

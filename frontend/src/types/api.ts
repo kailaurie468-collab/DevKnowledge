@@ -119,6 +119,20 @@ export interface Skill {
   updatedAt: string
 }
 
+// Skill Suggestion (智能推荐)
+export interface SkillSuggestion {
+  id: string
+  name: string
+  description: string
+  triggerDescription: string
+  category?: string
+  suggestedSteps: Omit<SkillStep, 'id'>[]
+  sourceSummary: string
+  status: 'pending' | 'accepted' | 'dismissed'
+  createdAt: string
+  updatedAt: string
+}
+
 // Knowledge Base
 export interface KnowledgeBase {
   id: string

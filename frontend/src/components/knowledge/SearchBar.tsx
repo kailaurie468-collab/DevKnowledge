@@ -7,7 +7,7 @@ interface SearchBarProps {
 
 export function SearchBar({ onSearch, placeholder = '搜索...' }: SearchBarProps) {
   const [query, setQuery] = useState('')
-  const timerRef = useRef<ReturnType<typeof setTimeout>>()
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   useEffect(() => {
     clearTimeout(timerRef.current)
