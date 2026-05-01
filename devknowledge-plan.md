@@ -23,8 +23,9 @@ React SPA (Vite, port 5173) ←→ Spring Boot WebFlux (port 8080) ←→ Postgr
 |---|---|---|
 | 前端 | Vite + React 19 + TypeScript + Tailwind | SPA 够用，不需要 SSR |
 | 后端 | Spring Boot 3.3 + WebFlux | 响应式流天然支持 SSE streaming |
-| 数据库 | PostgreSQL 16 | 全文搜索 (tsvector)、JSONB、数组类型 |
+| 数据库 | PostgreSQL 16 + pgvector | 全文搜索 (tsvector)、JSONB、数组类型、向量存储 |
 | AI | 用户自定义（支持 Claude / OpenAI / DeepSeek 等） | 用户自己配置 API Key 和服务商 |
+| AI 编排 | Spring AI | 原生 Java RAG 支持、多模型适配、Embedding 集成 |
 | 认证 | Spring Security + JWT | 标准方案 |
 
 ---
@@ -176,6 +177,40 @@ public interface AiProviderAdapter {
 
 UNIQUE(skill_id, step_order)
 
+### knowledge_bases
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | UUID | PK |
+| user_id | UUID | FK -> users(id), NOT NULL |
+| name | VARCHAR(200) | NOT NULL |
+| description | TEXT | |
+| created_at | TIMESTAMPTZ | NOT NULL |
+| updated_at | TIMESTAMPTZ | NOT NULL |
+
+### kb_documents
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | UUID | PK |
+| kb_id | UUID | FK -> knowledge_bases(id) ON DELETE CASCADE |
+| filename | VARCHAR(300) | NOT NULL |
+| content | TEXT | NOT NULL |
+| file_type | VARCHAR(20) | NOT NULL (md/txt) |
+| chunk_count | INTEGER | DEFAULT 0 |
+| created_at | TIMESTAMPTZ | NOT NULL |
+
+### kb_chunks
+| Column | Type | Constraints |
+|--------|------|-------------|
+| id | UUID | PK |
+| document_id | UUID | FK -> kb_documents(id) ON DELETE CASCADE |
+| kb_id | UUID | FK -> knowledge_bases(id) ON DELETE CASCADE |
+| chunk_index | INTEGER | NOT NULL |
+| content | TEXT | NOT NULL |
+| embedding | VECTOR(1536) | pgvector 向量 |
+| created_at | TIMESTAMPTZ | NOT NULL |
+
+CREATE INDEX ON kb_chunks USING ivfflat (embedding vector_cosine_ops);
+
 ---
 
 ## API 设计
@@ -205,6 +240,7 @@ GET    /api/links/search?q=useEffect   — 全文搜索，返回深链接 URL
 ### Demo 生成（SSE 流式）
 ```
 POST   /api/demos/generate             — 发送 prompt，流式返回代码+解释
+       请求体可选 kb_id 字段，关联知识库后 RAG 检索相关上下文注入 prompt
        SSE events: metadata → code chunks → explanation chunks → done
 GET    /api/demos                      — 历史 demo 列表
 GET    /api/demos/{id}                 — 单个 demo
@@ -220,6 +256,20 @@ PUT    /api/skills/{id}                — 编辑 skill
 DELETE /api/skills/{id}                — 删除 skill
 POST   /api/skills/{id}/export         — 导出为 Claude Code .md 格式
 GET    /api/skills/{id}/export/download — 下载 .md 文件
+```
+
+### 知识库管理
+```
+POST   /api/kb                         — 创建知识库
+GET    /api/kb                         — 用户的知识库列表
+GET    /api/kb/{id}                    — 知识库详情（含文档列表）
+DELETE /api/kb/{id}                    — 删除知识库（级联删除文档和分块）
+
+POST   /api/kb/{id}/documents          — 上传文档（MD/TXT，自动分块+向量化）
+GET    /api/kb/{id}/documents          — 文档列表
+DELETE /api/kb/documents/{docId}       — 删除文档
+
+GET    /api/kb/{id}/search?q=xxx       — 语义搜索知识库（返回相关片段）
 ```
 
 ---
@@ -291,7 +341,25 @@ Define Props interface and any local types...
 
 **交付物：** 配置好自己的 AI API 后，输入 "React useEffect 发起 API 请求"，实时看到生成的 demo。
 
-### Phase 3: Skills 构建器
+### Phase 3: 知识库（RAG）
+
+**后端：**
+1. 安装 pgvector 扩展，Flyway 迁移：knowledge_bases, kb_documents, kb_chunks
+2. Spring AI 集成：配置 EmbeddingModel（复用用户 AI Provider 配置）
+3. 文档上传接口 — 接收 MD/TXT，自动分块（按段落/固定长度）
+4. 向量化服务 — 调用用户配置的 AI API 生成 embedding，存入 pgvector
+5. RAG 检索服务 — 语义搜索 kb_chunks，返回 top-K 相关片段
+6. DemoController 扩展 — 接收可选 kb_id，检索后注入 system prompt
+
+**前端：**
+1. KnowledgeBase 页面（知识库列表、创建、删除）
+2. KbDetail 页面（文档列表、上传文档、语义搜索测试）
+3. DemoGenerator 扩展 — 新增知识库选择下拉框
+4. 上传组件（拖拽上传 MD/TXT，显示处理进度）
+
+**交付物：** 上传几篇 React 最佳实践的 MD 文档，创建 demo 时选择该知识库，生成的代码风格与文档一致。
+
+### Phase 4: Skills 构建器
 
 **后端：**
 1. Skill 提取 prompt（结构化 JSON 输出）
@@ -306,7 +374,7 @@ Define Props interface and any local types...
 
 **交付物：** 描述 "创建 React 组件的工作流"，得到结构化 skill，导出为 Claude Code 可用的 .md 文件。
 
-### Phase 4: 完善
+### Phase 5: 完善
 
 - 更多框架种子数据（Vue, Angular, Kotlin, Swift, Django 等）
 - 分页、加载态、错误处理
@@ -333,7 +401,8 @@ D:\Dev\devknowledge\
 │   │   │   ├── demos.ts               # SSE 处理
 │   │   │   ├── skills.ts
 │   │   │   ├── auth.ts
-│   │   │   └── settings.ts            # AI 配置接口
+│   │   │   ├── settings.ts            # AI 配置接口
+│   │   │   └── kb.ts                  # 知识库 API
 │   │   ├── components/
 │   │   │   ├── layout/
 │   │   │   │   ├── Header.tsx
@@ -351,6 +420,11 @@ D:\Dev\devknowledge\
 │   │   │   │   ├── SkillEditor.tsx
 │   │   │   │   ├── SkillStepsList.tsx
 │   │   │   │   └── SkillExportDialog.tsx
+│   │   │   ├── kb/
+│   │   │   │   ├── KbList.tsx
+│   │   │   │   ├── KbDetail.tsx
+│   │   │   │   ├── DocumentUpload.tsx
+│   │   │   │   └── SemanticSearch.tsx
 │   │   │   └── settings/
 │   │   │       └── AiConfigForm.tsx    # AI Provider 配置表单
 │   │   ├── pages/
@@ -358,6 +432,7 @@ D:\Dev\devknowledge\
 │   │   │   ├── KnowledgePage.tsx
 │   │   │   ├── DemoPage.tsx
 │   │   │   ├── SkillsPage.tsx
+│   │   │   ├── KbPage.tsx
 │   │   │   ├── LoginPage.tsx
 │   │   │   └── SettingsPage.tsx
 │   │   ├── hooks/
@@ -382,13 +457,16 @@ D:\Dev\devknowledge\
 │       │   ├── KnowledgeController.java
 │       │   ├── DemoController.java
 │       │   ├── SkillController.java
-│       │   └── SettingsController.java
+│       │   ├── SettingsController.java
+│       │   └── KbController.java
 │       ├── service/
 │       │   ├── AuthService.java
 │       │   ├── KnowledgeService.java
 │       │   ├── DemoService.java
 │       │   ├── SkillService.java
 │       │   ├── SkillExportService.java
+│       │   ├── KbService.java
+│       │   ├── EmbeddingService.java
 │       │   └── ai/
 │       │       ├── AiProviderAdapter.java       # 统一接口
 │       │       ├── OpenAiAdapter.java           # OpenAI 兼容格式
@@ -401,14 +479,20 @@ D:\Dev\devknowledge\
 │       │   ├── KnowledgeLink.java
 │       │   ├── Demo.java
 │       │   ├── Skill.java
-│       │   └── SkillStep.java
+│       │   ├── SkillStep.java
+│       │   ├── KnowledgeBase.java
+│       │   ├── KbDocument.java
+│       │   └── KbChunk.java
 │       ├── repository/
 │       │   ├── UserRepository.java
 │       │   ├── UserAiConfigRepository.java
 │       │   ├── FrameworkRepository.java
 │       │   ├── KnowledgeLinkRepository.java
 │       │   ├── DemoRepository.java
-│       │   └── SkillRepository.java
+│       │   ├── SkillRepository.java
+│       │   ├── KnowledgeBaseRepository.java
+│       │   ├── KbDocumentRepository.java
+│       │   └── KbChunkRepository.java
 │       ├── dto/
 │       │   ├── request/
 │       │   │   ├── LoginRequest.java
@@ -426,7 +510,7 @@ D:\Dev\devknowledge\
 │           ├── JwtTokenProvider.java
 │           └── JwtAuthenticationFilter.java
 │
-├── docker-compose.yml
+├── docker-compose.yml     # PostgreSQL (pgvector/pgvector:pg16 镜像)
 ├── .env.example
 └── README.md
 ```
@@ -434,6 +518,23 @@ D:\Dev\devknowledge\
 ---
 
 ## 关键技术实现
+
+### Maven 依赖新增
+
+```xml
+<!-- Spring AI - RAG + Embedding -->
+<dependency>
+    <groupId>org.springframework.ai</groupId>
+    <artifactId>spring-ai-openai-spring-boot-starter</artifactId>
+</dependency>
+
+<!-- pgvector -->
+<dependency>
+    <groupId>com.pgvector</groupId>
+    <artifactId>pgvector</artifactId>
+    <version>0.1.6</version>
+</dependency>
+```
 
 ### SSE 流式传输（Spring Boot WebFlux）
 ```java
@@ -469,6 +570,44 @@ CREATE INDEX idx_search ON knowledge_links USING GIN (search_vector);
 ### API Key 加密存储
 用户配置的 API Key 使用 AES 加密后存入数据库，前端展示时脱敏（只显示前 4 位 + 后 4 位）。
 
+### 知识库 RAG 流程（Spring AI + pgvector）
+
+```java
+// 1. 文档分块
+@Bean
+public TokenTextSplitter textSplitter() {
+    return new TokenTextSplitter(200, 20, 5, 10000, true);
+}
+
+// 2. Embedding 生成（复用用户 AI Provider 配置）
+public List<float[]> generateEmbeddings(List<String> chunks, UserAiConfig config) {
+    EmbeddingModel model = embeddingModelFactory.create(config);
+    return chunks.stream()
+        .map(chunk -> model.embed(chunk))
+        .toList();
+}
+
+// 3. RAG 检索 — 生成 demo 时注入上下文
+public String buildRagPrompt(String userPrompt, UUID kbId, UUID userId) {
+    List<KbChunk> relevant = kbChunkRepository.searchByVector(
+        kbId, embeddingService.embed(userPrompt), 5
+    );
+    String context = relevant.stream()
+        .map(KbChunk::getContent)
+        .collect(Collectors.joining("\n---\n"));
+    return "根据以下参考代码风格和模式：\n" + context + "\n\n用户需求：" + userPrompt;
+}
+```
+
+```sql
+-- pgvector 语义搜索
+SELECT id, content, 1 - (embedding <=> $1) AS similarity
+FROM kb_chunks
+WHERE kb_id = $2
+ORDER BY embedding <=> $1
+LIMIT 5;
+```
+
 ---
 
 ## 风险与应对
@@ -480,7 +619,9 @@ CREATE INDEX idx_search ON knowledge_links USING GIN (search_vector);
 | AI 响应延迟高 | SSE 流式传输缓解感知延迟，后端 120s 超时 |
 | Skill 提取 JSON 格式异常 | 解析失败时重试，prompt 中强调 JSON 格式要求 |
 | 中文全文搜索效果差 | 后续加 pg_trgm 三元组搜索或 jieba 分词 |
-| WebFlux + JPA 阻塞 | Schedulers.boundedElastic() 包装，Phase 4 可迁 R2DBC |
+| WebFlux + JPA 阻塞 | Schedulers.boundedElastic() 包装，Phase 5 可迁 R2DBC |
+| Embedding API 调用成本/限流 | 分块异步处理，失败重试，展示处理进度 |
+| pgvector 大规模数据性能 | ivfflat 索引 + 按 kb_id 分区，数据量大时考虑 HNSW 索引 |
 
 ---
 
@@ -488,5 +629,6 @@ CREATE INDEX idx_search ON knowledge_links USING GIN (search_vector);
 
 1. **Phase 1：** 启动前后端，搜索 "useEffect"，确认返回结果且链接可跳转
 2. **Phase 2：** 配置 AI Provider 后生成 demo，确认流式显示、语法高亮、可复制
-3. **Phase 3：** 描述工作流提取 skill，确认步骤可编辑，导出 .md 符合 Claude Code 格式
-4. 将导出的 .md 放入 `~/.claude/skills/` 后在 Claude Code 中用 `/skill-name` 验证可调用
+3. **Phase 3：** 上传 MD 文档到知识库，语义搜索返回相关片段；生成 demo 时选择知识库，代码风格与文档一致
+4. **Phase 4：** 描述工作流提取 skill，确认步骤可编辑，导出 .md 符合 Claude Code 格式
+5. 将导出的 .md 放入 `~/.claude/skills/` 后在 Claude Code 中用 `/skill-name` 验证可调用
