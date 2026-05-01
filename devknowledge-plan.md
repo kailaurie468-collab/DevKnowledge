@@ -216,6 +216,8 @@ CREATE INDEX ON kb_chunks USING ivfflat (embedding vector_cosine_ops);
 ## API 设计
 
 ### 认证
+**注意：** 登录和注册在初始访问时不需要，系统允许匿名浏览公共内容。只有当用户使用特定功能（如配置 AI、生成 Demo、保存 Skill 等）时，才会拦截并提示要求登录。
+
 ```
 POST   /api/auth/register              — 注册
 POST   /api/auth/login                 — 登录，返回 JWT
