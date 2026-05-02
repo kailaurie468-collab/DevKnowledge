@@ -43,3 +43,7 @@ docker-compose.override.yml
 
 # Claude Code
 .claude/
+
+# 进度
+progress.md
+进度.md

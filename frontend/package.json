@@ -9,15 +9,18 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@react-three/fiber": "^9.6.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.6.0",
+    "three": "^0.184.0",
     "zustand": "^5.0.5"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.4",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
+    "@types/three": "^0.184.0",
     "@types/wicg-file-system-access": "^2023.10.7",
     "@vitejs/plugin-react": "^4.5.0",
     "tailwindcss": "^4.1.4",

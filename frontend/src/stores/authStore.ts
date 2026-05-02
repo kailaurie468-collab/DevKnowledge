@@ -14,6 +14,7 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
+  // 如果返回了 null，那么 isAuthenticated 也会返回 false 
   isAuthenticated: !!localStorage.getItem('accessToken'),
   isLoading: false,
 
