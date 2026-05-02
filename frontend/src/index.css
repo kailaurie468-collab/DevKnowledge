@@ -12,3 +12,12 @@
   --color-primary-800: #1e40af;
   --color-primary-900: #1e3a8a;
 }
+
+@keyframes slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out;
+}

@@ -1,20 +1,20 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
+import { useNotify } from '@/stores/notify'
 
 export function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [isRegister, setIsRegister] = useState(false)
-  const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
   const { login, register } = useAuthStore()
+  const { notify } = useNotify()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError('')
     setLoading(true)
     try {
       if (isRegister) {
@@ -24,7 +24,7 @@ export function LoginPage() {
       }
       navigate('/')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '发生错误')
+      notify(err instanceof Error ? err.message : '发生错误', 'error')
     } finally {
       setLoading(false)
     }
@@ -70,8 +70,6 @@ export function LoginPage() {
             />
           </div>
 
-          {error && <p className="text-sm text-red-600">{error}</p>}
-
           <button
             type="submit"
             disabled={loading}
@@ -84,7 +82,7 @@ export function LoginPage() {
         <p className="text-sm text-center mt-4 text-gray-500">
           {isRegister ? '已有账号？' : '没有账号？'}{' '}
           <button
-            onClick={() => { setIsRegister(!isRegister); setError('') }}
+            onClick={() => setIsRegister(!isRegister)}
             className="text-primary-600 hover:underline"
           >
             {isRegister ? '去登录' : '去注册'}
