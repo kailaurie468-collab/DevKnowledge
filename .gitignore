@@ -45,5 +45,3 @@ docker-compose.override.yml
 .claude/
 
 # 进度
-progress.md
-进度.md
