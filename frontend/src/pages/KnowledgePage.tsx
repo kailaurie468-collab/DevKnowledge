@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { knowledgeApi } from '@/api/knowledge'
+import { knowledgeApi, type WebSearchResult } from '@/api/knowledge'
 import { SearchBar } from '@/components/knowledge/SearchBar'
 import { FrameworkGrid } from '@/components/knowledge/FrameworkGrid'
 import { LinkCard } from '@/components/knowledge/LinkCard'
@@ -10,7 +10,9 @@ export function KnowledgePage() {
   const [selectedFw, setSelectedFw] = useState<Framework | null>(null)
   const [links, setLinks] = useState<KnowledgeLink[]>([])
   const [searchResults, setSearchResults] = useState<LinkSearchResult[]>([])
+  const [webResults, setWebResults] = useState<WebSearchResult[]>([])
   const [isSearching, setIsSearching] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
 
   useEffect(() => {
     knowledgeApi.getFrameworks().then(setFrameworks).catch(console.error)
@@ -25,13 +27,21 @@ export function KnowledgePage() {
   const handleSearch = useCallback(async (query: string) => {
     if (!query.trim()) {
       setSearchResults([])
+      setWebResults([])
       setIsSearching(false)
+      setSearchQuery('')
       return
     }
+    setSearchQuery(query)
     setIsSearching(true)
     try {
-      const results = await knowledgeApi.searchLinks(query)
-      setSearchResults(results)
+      // 同时搜索本地知识库和 Web
+      const [localResults, webSearchResults] = await Promise.all([
+        knowledgeApi.searchLinks(query).catch(() => []),
+        knowledgeApi.webSearch(query, 8).catch(() => []),
+      ])
+      setSearchResults(localResults)
+      setWebResults(webSearchResults)
     } catch (err) {
       console.error(err)
     } finally {
@@ -39,7 +49,7 @@ export function KnowledgePage() {
     }
   }, [])
 
-  const showSearch = searchResults.length > 0 || isSearching
+  const showSearch = searchQuery.length > 0
 
   return (
     <div>
@@ -50,14 +60,56 @@ export function KnowledgePage() {
       </div>
 
       {showSearch ? (
-        <div>
-          <h2 className="text-sm font-medium text-gray-500 mb-3">
-            {isSearching ? '搜索中...' : `${searchResults.length} 条结果`}
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {searchResults.map(result => (
-              <LinkCard key={result.link.id} result={result} />
-            ))}
+        <div className="space-y-8">
+          <button
+            onClick={() => { setSearchQuery(''); setSearchResults([]); setWebResults([]) }}
+            className="text-sm text-primary-600 hover:underline"
+          >
+            ← 返回框架列表
+          </button>
+
+          {/* 本地知识库结果 */}
+          <div>
+            <h2 className="text-sm font-medium text-gray-500 mb-3">
+              {isSearching ? '搜索中...' : `本地知识库 · ${searchResults.length} 条结果`}
+            </h2>
+            {searchResults.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {searchResults.map(result => (
+                  <LinkCard key={result.link.id} result={result} />
+                ))}
+              </div>
+            ) : (
+              !isSearching && <p className="text-sm text-gray-400">无匹配结果</p>
+            )}
+          </div>
+
+          {/* Web 搜索结果 */}
+          <div>
+            <h2 className="text-sm font-medium text-gray-500 mb-3">
+              {isSearching ? '' : `Web 搜索 · ${webResults.length} 条结果`}
+            </h2>
+            {webResults.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {webResults.map((result, i) => (
+                  <a
+                    key={i}
+                    href={result.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block p-4 border border-gray-200 rounded-lg hover:border-primary-300 hover:shadow-sm transition-all"
+                  >
+                    <h3 className="font-medium text-gray-900 text-sm mb-1">{result.title}</h3>
+                    <p className="text-xs text-gray-400 mb-1.5 truncate">{result.url}</p>
+                    {result.description && (
+                      <p className="text-sm text-gray-500 line-clamp-2">{result.description}</p>
+                    )}
+                  </a>
+                ))}
+              </div>
+            ) : (
+              !isSearching && <p className="text-sm text-gray-400">无 Web 结果</p>
+            )}
           </div>
         </div>
       ) : selectedFw ? (
