@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Layout } from '@/components/layout/Layout'
 import { ParticleContext } from '@/stores/particleContext'
+import { NotifyProvider } from '@/stores/notify'
 import Antigravity from '@/components/Antigravity'
 import { HomePage } from '@/pages/HomePage'
 import { KnowledgePage } from '@/pages/KnowledgePage'
@@ -16,6 +17,7 @@ export default function App() {
 
   return (
     <ParticleContext.Provider value={{ visible: particleVisible, setVisible: setParticleVisible }}>
+      <NotifyProvider>
       <div
         style={{
           position: 'fixed',
@@ -57,6 +59,7 @@ export default function App() {
           </Route>
         </Routes>
       </BrowserRouter>
+      </NotifyProvider>
     </ParticleContext.Provider>
   )
 }

@@ -11,7 +11,7 @@ export function SettingsPage() {
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [model, setModel] = useState('')
-  const [maxTokens, setMaxTokens] = useState(4096)
+  const [maxTokens, setMaxTokens] = useState(10000)
   const [maskedKey, setMaskedKey] = useState('')
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [testing, setTesting] = useState(false)
@@ -94,10 +94,12 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="max-w-xl space-y-8">
+    <div>
+      <h1 className="text-2xl font-bold text-gray-900 mb-6">设置</h1>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
       {/* AI 配置 */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-4">AI 配置</h1>
+      <div className="p-6 border border-gray-200 rounded-lg">
+        <h2 className="text-lg font-bold text-gray-900 mb-4">AI 配置</h2>
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">服务商</label>
@@ -193,8 +195,8 @@ export function SettingsPage() {
       </div>
 
       {/* 数据存储配置 */}
-      <div>
-        <h2 className="text-xl font-bold text-gray-900 mb-4">数据存储</h2>
+      <div className="p-6 border border-gray-200 rounded-lg">
+        <h2 className="text-lg font-bold text-gray-900 mb-4">数据存储</h2>
         <p className="text-sm text-gray-500 mb-4">
           行为数据用于智能推荐 Skills，只存储关键词摘要，不存储原始内容。
         </p>
@@ -277,6 +279,7 @@ export function SettingsPage() {
             </button>
           )}
         </div>
+      </div>
       </div>
     </div>
   )

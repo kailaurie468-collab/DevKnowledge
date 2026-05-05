@@ -71,7 +71,7 @@ class ApiClient {
     return this.request<T>(endpoint, { method: 'DELETE' })
   }
 
-  async *stream(endpoint: string, body: unknown): AsyncGenerator<string> {
+  async *stream(endpoint: string, body: unknown): AsyncGenerator<{ event: string; data: string }> {
     const token = this.getToken()
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -96,6 +96,7 @@ class ApiClient {
 
     const decoder = new TextDecoder()
     let buffer = ''
+    let currentEvent = 'message'
 
     try {
       while (true) {
@@ -107,10 +108,13 @@ class ApiClient {
         buffer = lines.pop() || ''
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim()
+          } else if (line.startsWith('data: ')) {
             const data = line.slice(6).trim()
             if (data === '[DONE]') return
-            if (data) yield data
+            if (data) yield { event: currentEvent, data }
+            currentEvent = 'message'
           }
         }
       }
