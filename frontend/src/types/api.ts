@@ -159,14 +159,19 @@ export interface KbChunk {
 
 // AI Config
 export interface AiConfig {
+  id?: string
+  name?: string
   provider: 'openai' | 'anthropic' | 'deepseek' | 'custom'
   apiKeyMasked: string
   baseUrl: string
   model: string
   maxTokens: number
+  isActive?: boolean
 }
 
 export interface AiConfigRequest {
+  configId?: string
+  name?: string
   provider: string
   apiKey: string
   baseUrl: string
@@ -178,6 +183,11 @@ export interface ProviderInfo {
   name: string
   defaultBaseUrl: string
   models: string[]
+}
+
+export interface TokenUsage {
+  date: string
+  tokens: number
 }
 
 // SSE — 支持 ReAct 推理过程可视化
