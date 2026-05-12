@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 
 export interface SSEChunk {
   event: string
@@ -11,6 +11,8 @@ interface UseSSEOptions {
   onError?: (error: Error) => void
 }
 
+type GeneratorFn = (signal: AbortSignal) => AsyncGenerator<SSEChunk>
+
 /**
  * SSE 流式 Hook
  * 支持 ReAct 事件类型：thought / tool_call / tool_result / text / done / error
@@ -21,38 +23,45 @@ export function useSSE() {
   const [events, setEvents] = useState<SSEChunk[]>([])
   const abortRef = useRef<AbortController | null>(null)
 
+  useEffect(() => {
+    return () => { abortRef.current?.abort() }
+  }, [])
+
   const stream = useCallback(async (
-    generator: AsyncGenerator<SSEChunk>,
+    generatorFn: GeneratorFn,
     options: UseSSEOptions = {}
   ) => {
     const { onChunk, onDone, onError } = options
+    const controller = new AbortController()
+    abortRef.current = controller
     setIsStreaming(true)
     setOutput('')
     setEvents([])
 
     try {
-      for await (const chunk of generator) {
-        // 累积纯文本输出（兼容旧用法）
+      for await (const chunk of generatorFn(controller.signal)) {
         if (chunk.event === 'text' || chunk.event === 'message') {
           setOutput(prev => prev + chunk.data)
         }
-        // 记录所有事件
         setEvents(prev => [...prev, chunk])
         onChunk?.(chunk)
       }
       onDone?.()
     } catch (err) {
+      if (controller.signal.aborted) return
       const error = err instanceof Error ? err : new Error(String(err))
       onError?.(error)
       throw error
     } finally {
-      setIsStreaming(false)
+      if (abortRef.current === controller) {
+        setIsStreaming(false)
+        abortRef.current = null
+      }
     }
   }, [])
 
   const cancel = useCallback(() => {
     abortRef.current?.abort()
-    setIsStreaming(false)
   }, [])
 
   const reset = useCallback(() => {

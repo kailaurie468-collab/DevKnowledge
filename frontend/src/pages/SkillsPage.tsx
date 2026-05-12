@@ -30,8 +30,9 @@ export function SkillsPage() {
     if (!description.trim()) return
     reset()
     try {
-      const generator = skillsApi.extract({ description })
-      await stream(generator, {
+      await stream(
+        (signal) => skillsApi.extract({ description })(signal),
+      {
         onDone: () => {
           if (isAuthenticated) {
             skillsApi.getSkills().then(setSkills).catch(console.error)

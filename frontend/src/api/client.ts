@@ -71,7 +71,7 @@ class ApiClient {
     return this.request<T>(endpoint, { method: 'DELETE' })
   }
 
-  async *stream(endpoint: string, body: unknown): AsyncGenerator<{ event: string; data: string }> {
+  async *stream(endpoint: string, body: unknown, signal?: AbortSignal): AsyncGenerator<{ event: string; data: string }> {
     const token = this.getToken()
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -84,6 +84,7 @@ class ApiClient {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
+      signal,
     })
 
     if (!response.ok) {
@@ -91,32 +92,21 @@ class ApiClient {
       throw new Error(error.message || `HTTP ${response.status}`)
     }
 
-    const reader = response.body?.getReader()
-    if (!reader) throw new Error('No response body')
+    if (!response.body) throw new Error('No response body')
 
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let currentEvent = 'message'
+    const { EventSourceParserStream } = await import('eventsource-parser/stream')
+    const eventStream = response.body
+      .pipeThrough(new TextDecoderStream())
+      .pipeThrough(new EventSourceParserStream())
 
+    const reader = eventStream.getReader()
     try {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7).trim()
-          } else if (line.startsWith('data: ')) {
-            const data = line.slice(6).trim()
-            if (data === '[DONE]') return
-            if (data) yield { event: currentEvent, data }
-            currentEvent = 'message'
-          }
-        }
+        const data = value.data
+        if (data === '[DONE]') return
+        if (data) yield { event: value.event || 'message', data }
       }
     } finally {
       reader.releaseLock()

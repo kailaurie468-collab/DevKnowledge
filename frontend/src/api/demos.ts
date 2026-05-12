@@ -3,7 +3,7 @@ import type { Demo, GenerateDemoRequest } from '@/types/api'
 
 export const demosApi = {
   generate: (request: GenerateDemoRequest) =>
-    api.stream('/demos/generate', request),
+    (signal: AbortSignal) => api.stream('/demos/generate', request, signal),
 
   getDemos: () =>
     api.get<Demo[]>('/demos'),

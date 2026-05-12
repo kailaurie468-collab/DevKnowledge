@@ -3,7 +3,7 @@ import type { Skill, SkillSuggestion, ExtractSkillRequest } from '@/types/api'
 
 export const skillsApi = {
   extract: (request: ExtractSkillRequest) =>
-    api.stream('/skills/extract', request),
+    (signal: AbortSignal) => api.stream('/skills/extract', request, signal),
 
   getSkills: () =>
     api.get<Skill[]>('/skills'),
