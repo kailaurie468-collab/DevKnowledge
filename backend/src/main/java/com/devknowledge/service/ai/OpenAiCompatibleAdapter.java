@@ -93,6 +93,7 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
                 .doOnNext(chunk -> log.debug("收到 chunk: {}", chunk))
                 .doOnError(e -> log.error("AI 流式调用错误: {}", e.getMessage()))
                 .doOnComplete(() -> log.info("AI 流式调用完成"))
+                // 执行n次，第一次创建累加器，后续累加数据
                 .collect(() -> new String[]{"", "", ""}, (acc, chunk) -> {
                     JsonNode delta = extractDelta(chunk);
                     if (delta == null) return;
@@ -131,7 +132,7 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
                             reasoning.length(), content.length(), toolCall.isEmpty() ? "无" : toolCall);
 
                     List<AiChunk> result = new ArrayList<>();
-
+ 
                     // 有工具调用
                     if (!toolCall.isEmpty()) {
                         int idx = toolCall.indexOf(":");

@@ -57,8 +57,10 @@ public class KnowledgeController {
      * @return 搜索结果列表（最多 20 条，按相关度排序）
      */
     @GetMapping("/links/search")
-    public Mono<ResponseEntity<List<LinkSearchResult>>> searchLinks(@RequestParam("q") String query) {
-        return knowledgeService.searchLinks(query)
+    public Mono<ResponseEntity<List<LinkSearchResult>>> searchLinks(
+            @RequestParam("q") String query,
+            @RequestParam(value = "framework", required = false) String framework) {
+        return knowledgeService.searchLinks(query, framework)
                 .map(ResponseEntity::ok);
     }
 

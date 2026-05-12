@@ -66,6 +66,62 @@ public class KnowledgeService {
      * @param query 搜索关键词，如 "useEffect"
      * @return 搜索结果列表（最多 20 条）
      */
+    public Mono<List<LinkSearchResult>> searchLinks(String query, String frameworkSlug) {
+        return Mono.fromCallable(() -> {
+            // 1. 全文搜索
+            List<KnowledgeLinkMapper.KnowledgeLinkSearchResult> results;
+            if (frameworkSlug != null && !frameworkSlug.isBlank()) {
+                Framework fw = frameworkMapper.selectOne(
+                        new LambdaQueryWrapper<Framework>().eq(Framework::getSlug, frameworkSlug));
+                if (fw == null) {
+                    return Collections.<LinkSearchResult>emptyList();
+                }
+                results = knowledgeLinkMapper.fullTextSearchByFramework(query, fw.getId().toString(), 20);
+            } else {
+                results = knowledgeLinkMapper.fullTextSearch(query, 20);
+            }
+
+            if (results.isEmpty()) {
+                return Collections.<LinkSearchResult>emptyList();
+            }
+
+            // 2. 收集所有 framework_id，批量查询框架名称
+            List<UUID> fwUuids = results.stream()
+                    .map(r2 -> UUID.fromString(r2.getFrameworkId()))
+                    .distinct()
+                    .collect(Collectors.toList());
+
+            Map<String, String> fwNameMap = new HashMap<>();
+            if (!fwUuids.isEmpty()) {
+                List<Framework> frameworks = frameworkMapper.selectList(
+                        new LambdaQueryWrapper<Framework>().in(Framework::getId, fwUuids));
+                for (Framework fw : frameworks) {
+                    fwNameMap.put(fw.getId().toString(), fw.getName());
+                }
+            }
+
+            // 3. 组装返回结果
+            return results.stream().map(r -> {
+                LinkSearchResult result = new LinkSearchResult();
+
+                LinkSearchResult.LinkInfo link = new LinkSearchResult.LinkInfo();
+                link.setId(UUID.fromString(r.getId()));
+                link.setFrameworkId(UUID.fromString(r.getFrameworkId()));
+                link.setTitle(r.getTitle());
+                link.setUrl(r.getUrl());
+                link.setAnchor(r.getAnchor());
+                link.setDescription(r.getDescription());
+                link.setTags(r.getTags());
+                link.setPopularityScore(r.getPopularityScore());
+
+                result.setLink(link);
+                result.setFrameworkName(fwNameMap.getOrDefault(r.getFrameworkId(), "Unknown"));
+                result.setRelevanceScore(r.getRelevanceScore());
+
+                return result;
+            }).collect(Collectors.toList());
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
     public Mono<List<LinkSearchResult>> searchLinks(String query) {
         return Mono.fromCallable(() -> {
             // 1. 全文搜索

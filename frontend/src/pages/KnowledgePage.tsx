@@ -13,6 +13,10 @@ export function KnowledgePage() {
   const [webResults, setWebResults] = useState<WebSearchResult[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  // 框架内搜索
+  const [fwSearchQuery, setFwSearchQuery] = useState('')
+  const [fwSearchResults, setFwSearchResults] = useState<LinkSearchResult[]>([])
+  const [fwSearching, setFwSearching] = useState(false)
 
   useEffect(() => {
     knowledgeApi.getFrameworks().then(setFrameworks).catch(console.error)
@@ -21,9 +25,13 @@ export function KnowledgePage() {
   useEffect(() => {
     if (selectedFw) {
       knowledgeApi.getFrameworkLinks(selectedFw.slug).then(setLinks).catch(console.error)
+      // 切换框架时清除框架内搜索
+      setFwSearchQuery('')
+      setFwSearchResults([])
     }
   }, [selectedFw])
 
+  // 全局搜索
   const handleSearch = useCallback(async (query: string) => {
     if (!query.trim()) {
       setSearchResults([])
@@ -35,7 +43,6 @@ export function KnowledgePage() {
     setSearchQuery(query)
     setIsSearching(true)
     try {
-      // 同时搜索本地知识库和 Web
       const [localResults, webSearchResults] = await Promise.all([
         knowledgeApi.searchLinks(query).catch(() => []),
         knowledgeApi.webSearch(query, 8).catch(() => []),
@@ -49,7 +56,36 @@ export function KnowledgePage() {
     }
   }, [])
 
-  const showSearch = searchQuery.length > 0
+  // 框架内搜索
+  const handleFwSearch = useCallback(async (query: string) => {
+    if (!query.trim() || !selectedFw) {
+      setFwSearchQuery('')
+      setFwSearchResults([])
+      return
+    }
+    setFwSearchQuery(query)
+    setFwSearching(true)
+    try {
+      const results = await knowledgeApi.searchLinks(query, selectedFw.slug).catch(() => [])
+      setFwSearchResults(results)
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setFwSearching(false)
+    }
+  }, [selectedFw])
+
+  // 框架内搜索 → 跳转到全局搜索
+  const expandToGlobalSearch = useCallback(() => {
+    if (fwSearchQuery) {
+      setSearchQuery(fwSearchQuery)
+      handleSearch(fwSearchQuery)
+      setFwSearchQuery('')
+      setFwSearchResults([])
+    }
+  }, [fwSearchQuery, handleSearch])
+
+  const showGlobalSearch = searchQuery.length > 0
 
   return (
     <div>
@@ -59,7 +95,7 @@ export function KnowledgePage() {
         <SearchBar onSearch={handleSearch} placeholder="搜索文档... 例如 React useEffect" />
       </div>
 
-      {showSearch ? (
+      {showGlobalSearch ? (
         <div className="space-y-8">
           <button
             onClick={() => { setSearchQuery(''); setSearchResults([]); setWebResults([]) }}
@@ -118,35 +154,74 @@ export function KnowledgePage() {
             onClick={() => { setSelectedFw(null); setLinks([]) }}
             className="text-sm text-primary-600 hover:underline mb-4"
           >
-            返回框架列表
+            ← 返回框架列表
           </button>
           <h2 className="text-lg font-semibold mb-3">{selectedFw.name}</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {links.map(link => (
-              <a
-                key={link.id}
-                href={link.anchor ? `${link.url}#${link.anchor}` : link.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block p-3 border border-gray-200 rounded-lg hover:border-primary-300 hover:shadow-sm transition-all"
-              >
-                <h3 className="font-medium text-sm text-gray-900 mb-1">{link.title}</h3>
-                {link.description && (
-                  <p className="text-xs text-gray-500 line-clamp-2">{link.description}</p>
-                )}
-                {link.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {link.tags.map(tag => (
-                      <span key={tag} className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded">
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </a>
-            ))}
-            {links.length === 0 && <p className="text-gray-500 text-sm">暂无链接。</p>}
+
+          {/* 框架内搜索框 */}
+          <div className="mb-4">
+            <SearchBar onSearch={handleFwSearch} placeholder={`在 ${selectedFw.name} 中搜索...`} />
           </div>
+
+          {/* 框架内搜索结果 */}
+          {fwSearchQuery ? (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-medium text-gray-500">
+                  {fwSearching ? '搜索中...' : `${selectedFw.name} · ${fwSearchResults.length} 条结果`}
+                </h3>
+                <button
+                  onClick={() => { setFwSearchQuery(''); setFwSearchResults([]) }}
+                  className="text-xs text-gray-400 hover:text-gray-600"
+                >
+                  清除搜索
+                </button>
+              </div>
+              {fwSearchResults.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {fwSearchResults.map(result => (
+                    <LinkCard key={result.link.id} result={result} />
+                  ))}
+                </div>
+              ) : (
+                !fwSearching && <p className="text-sm text-gray-400">当前框架无匹配结果</p>
+              )}
+              <button
+                onClick={expandToGlobalSearch}
+                className="mt-4 text-sm text-primary-600 hover:underline"
+              >
+                搜索全部框架 →
+              </button>
+            </div>
+          ) : (
+            /* 框架链接列表 */
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {links.map(link => (
+                <a
+                  key={link.id}
+                  href={link.anchor ? `${link.url}#${link.anchor}` : link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block p-3 border border-gray-200 rounded-lg hover:border-primary-300 hover:shadow-sm transition-all"
+                >
+                  <h3 className="font-medium text-sm text-gray-900 mb-1">{link.title}</h3>
+                  {link.description && (
+                    <p className="text-xs text-gray-500 line-clamp-2">{link.description}</p>
+                  )}
+                  {link.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {link.tags.map(tag => (
+                        <span key={tag} className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </a>
+              ))}
+              {links.length === 0 && <p className="text-gray-500 text-sm">暂无链接。</p>}
+            </div>
+          )}
         </div>
       ) : (
         <div>

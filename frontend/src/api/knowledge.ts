@@ -14,8 +14,10 @@ export const knowledgeApi = {
   getFrameworkLinks: (slug: string) =>
     api.get<KnowledgeLink[]>(`/frameworks/${slug}/links`),
 
-  searchLinks: (query: string) =>
-    api.get<LinkSearchResult[]>('/links/search', { q: query }),
+  searchLinks: (query: string, framework?: string) =>
+    api.get<LinkSearchResult[]>('/links/search', framework
+      ? { q: query, framework }
+      : { q: query }),
 
   /** Web 搜索（实时联网） */
   webSearch: (query: string, limit = 10) =>

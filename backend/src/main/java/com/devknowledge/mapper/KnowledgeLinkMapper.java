@@ -43,6 +43,24 @@ public interface KnowledgeLinkMapper extends BaseMapper<KnowledgeLink> {
     List<KnowledgeLinkSearchResult> fullTextSearch(@Param("query") String query, @Param("limit") int limit);
 
     /**
+     * 在指定框架范围内全文搜索
+     */
+    @Select("""
+        SELECT id::text, framework_id::text, title, url, anchor, description, tags, popularity_score,
+               ts_rank(search_vector, plainto_tsquery('english', #{query})) AS relevance_score
+        FROM knowledge_links
+        WHERE search_vector @@ plainto_tsquery('english', #{query})
+          AND framework_id = #{frameworkId}::uuid
+        ORDER BY relevance_score DESC, popularity_score DESC
+        LIMIT #{limit}
+        """)
+    @ResultMap("searchResult")
+    List<KnowledgeLinkSearchResult> fullTextSearchByFramework(
+            @Param("query") String query,
+            @Param("frameworkId") String frameworkId,
+            @Param("limit") int limit);
+
+    /**
      * 全文搜索结果（具体类，便于 MyBatis 映射）
      */
     class KnowledgeLinkSearchResult {
