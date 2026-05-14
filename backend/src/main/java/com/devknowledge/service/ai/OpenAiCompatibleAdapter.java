@@ -62,13 +62,43 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
             msgList.add(Map.of("role", msg.role(), "content", msg.content()));
         }
 
+        // 将自定义的tools 按照openai格式 封装进请求的body
+        /**
+         * {
+         *   "model": "gpt-3.5-turbo-1106",
+         *   "messages": [
+         *     {"role": "user", "content": "帮我查一下今天北京天气"}
+         *   ],
+         *   "tools": [
+         *     // 工具定义列表
+         *     {
+         *       "type": "function",
+         *       "function": {
+         *         "name": "get_weather",
+         *         "description": "获取指定城市的实时天气",
+         *         "parameters": {
+         *           "type": "object",
+         *           "properties": {
+         *             "city": {
+         *               "type": "string",
+         *               "description": "城市名称，如北京、上海"
+         *             }
+         *           },
+         *           "required": ["city"]
+         *         }
+         *       }
+         *     }
+         *   ],
+         *   "tool_choice": "auto"
+         * }
+         */
         List<Map<String, Object>> toolList = new ArrayList<>();
         for (AiFunction fn : tools) {
             Map<String, Object> tool = new LinkedHashMap<>();
             tool.put("type", "function");
             Map<String, Object> function = new LinkedHashMap<>();
             function.put("name", fn.name());
-            function.put("description", fn.description());
+            function.put("description", fn.description()); // 何时调用tool
             try {
                 function.put("parameters", objectMapper.readTree(fn.parametersJson()));
             } catch (JsonProcessingException e) {
@@ -89,64 +119,99 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
 
         // 先收集所有 chunk，再统一解析
         // 原因：小米模型的 reasoning_content 和 content 是分开的，需要先看完整输出再决定
+        // 累加器结构：[0]=reasoning, [1]=content, [2..n]=tool call JSONs
         return postStream(client, body)
                 .doOnNext(chunk -> log.debug("收到 chunk: {}", chunk))
                 .doOnError(e -> log.error("AI 流式调用错误: {}", e.getMessage()))
                 .doOnComplete(() -> log.info("AI 流式调用完成"))
-                // 执行n次，第一次创建累加器，后续累加数据
-                .collect(() -> new String[]{"", "", ""}, (acc, chunk) -> {
-                    JsonNode delta = extractDelta(chunk);
-                    if (delta == null) return;
+                .collect(
+                        () -> new Object[]{"", "", new LinkedHashMap<Integer, String[]>()},
+                        (acc, chunk) -> {
+                            String reasoning = (String) acc[0];
+                            String content = (String) acc[1];
+                            @SuppressWarnings("unchecked")
+                            LinkedHashMap<Integer, String[]> toolAcc = (LinkedHashMap<Integer, String[]>) acc[2];
 
-                    // 工具调用
-                    JsonNode toolCalls = delta.get("tool_calls");
-                    if (toolCalls != null && toolCalls.isArray() && !toolCalls.isEmpty()) {
-                        JsonNode tc = toolCalls.get(0);
-                        JsonNode fnNode = tc.get("function");
-                        if (fnNode != null && fnNode.has("name")) {
-                            String fnName = fnNode.get("name").asText();
-                            String fnArgs = fnNode.has("arguments") ? fnNode.get("arguments").asText() : "{}";
-                            log.info("AI 请求调用工具: {}({})", fnName, fnArgs);
-                            acc[2] = fnName + ":" + fnArgs;
-                        }
-                    }
+                            JsonNode delta = extractDelta(chunk);
+                            if (delta == null) return;
 
-                    // 累积 reasoning_content（思考过程）
-                    if (delta.has("reasoning_content") && !delta.get("reasoning_content").isNull()) {
-                        String r = delta.get("reasoning_content").asText();
-                        if (!r.isEmpty()) acc[0] += r;
-                    }
+                            // 工具调用：按 index 累积 name + arguments
+                            /*
+                            "message": {
+                                  "role": "assistant",
+                                  "content": null, // 此时通常没有文本内容
+                                  "tool_calls": [
+                                    {
+                                      "id": "call_abc123",
+                                      "type": "function",
+                                      "function": {
+                                        "name": "get_current_weather",
+                                        "arguments": "{\"location\": \"Boston, MA\", \"unit\": \"celsius\"}"
+                                      }
+                                    }
+                                  ]
+                                }
+                            chunk1: index=0, name="search", arguments=""     → slot[0]="search", slot[1]=""
+                            chunk2: index=0, arguments="{\"query"            → slot[0]="search", slot[1]="{\"query"
+                            chunk3: index=0, arguments="\":\"hello\"}"       → slot[0]="search", slot[1]="{\"query\":\"hello\"}"
+                             */
+                            JsonNode toolCalls = delta.get("tool_calls");
+                            if (toolCalls != null && toolCalls.isArray()) {
+                                for (JsonNode tc : toolCalls) {
+                                    int index = tc.has("index") ? tc.get("index").asInt() : 0;
+                                    JsonNode fnNode = tc.get("function");
+                                    if (fnNode == null) continue;
 
-                    // 累积 content（最终回复）
-                    if (delta.has("content") && !delta.get("content").isNull()) {
-                        String c = delta.get("content").asText();
-                        if (!c.isEmpty()) acc[1] += c;
-                    }
-                })
-                // 对累积的所有原始数据进行一次性解析
+                                    String[] slot = toolAcc.computeIfAbsent(index, k -> new String[]{"", ""});
+                                    if (fnNode.has("name") && !fnNode.get("name").asText().isEmpty()) {
+                                        slot[0] = fnNode.get("name").asText();
+                                    }
+                                    if (fnNode.has("arguments") && !fnNode.get("arguments").asText().isEmpty()) {
+                                        slot[1] += fnNode.get("arguments").asText();
+                                    }
+                                }
+                            }
+
+                            // 累积 reasoning_content（思考过程）
+                            if (delta.has("reasoning_content") && !delta.get("reasoning_content").isNull()) {
+                                String r = delta.get("reasoning_content").asText();
+                                if (!r.isEmpty()) acc[0] = reasoning + r;
+                            }
+
+                            // 累积 content（最终回复）
+                            if (delta.has("content") && !delta.get("content").isNull()) {
+                                String c = delta.get("content").asText();
+                                if (!c.isEmpty()) acc[1] = content + c;
+                            }
+                        })
                 .flatMapMany(acc -> {
-                    String reasoning = acc[0];
-                    String content = acc[1];
-                    String toolCall = acc[2];
-                    log.info("AI 输出 - reasoning长度: {}, content长度: {}, toolCall: {}",
-                            reasoning.length(), content.length(), toolCall.isEmpty() ? "无" : toolCall);
+                    String reasoning = (String) acc[0];
+                    String content = (String) acc[1];
+                    @SuppressWarnings("unchecked")
+                    LinkedHashMap<Integer, String[]> toolAcc = (LinkedHashMap<Integer, String[]>) acc[2];
+
+                    log.info("AI 输出 - reasoning长度: {}, content长度: {}, toolCall数量: {}",
+                            reasoning.length(), content.length(), toolAcc.size());
 
                     List<AiChunk> result = new ArrayList<>();
- 
-                    // 有工具调用
-                    if (!toolCall.isEmpty()) {
-                        int idx = toolCall.indexOf(":");
-                        if (idx > 0) {
-                            result.add(AiChunk.toolCall(toolCall.substring(0, idx), toolCall.substring(idx + 1)));
+
+                    // 按 index 顺序输出所有工具调用
+                    for (Map.Entry<Integer, String[]> entry : toolAcc.entrySet()) {
+                        String fnName = entry.getValue()[0];
+                        String fnArgs = entry.getValue()[1];
+                        if (fnName.isEmpty()) {
+                            log.warn("工具调用 index={} 缺少 function name，跳过", entry.getKey());
+                            continue;
                         }
+                        if (fnArgs.isEmpty()) fnArgs = "{}";
+                        log.info("AI 请求调用工具 [{}]: {}({})", entry.getKey(), fnName, fnArgs);
+                        result.add(AiChunk.toolCall(fnName, fnArgs));
                     }
 
                     // 只输出 content（模型的实际回复），不输出 reasoning
-                    // reasoning 是模型内部思考过程，不应展示给用户
                     if (!content.isEmpty()) {
                         result.add(AiChunk.text(content));
                     } else if (result.isEmpty()) {
-                        // content 为空且没有工具调用，说明模型没有产生有效输出
                         log.warn("AI 未产生 content 输出，reasoning: {}", reasoning.substring(0, Math.min(reasoning.length(), 100)));
                         result.add(AiChunk.text("[AI 未产生输出，请重试]"));
                     }
