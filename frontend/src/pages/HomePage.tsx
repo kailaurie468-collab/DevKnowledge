@@ -18,7 +18,7 @@ const modules = [
   {
     path: '/skills',
     title: 'Skills 构建',
-    desc: '从描述中提取工作流，导出为 Claude Code Skills。',
+    desc: '从描述中提取工作流，导出为 Skills。',
     variation: 2,
   },
   {
