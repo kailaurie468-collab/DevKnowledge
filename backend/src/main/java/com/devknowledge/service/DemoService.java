@@ -1,6 +1,8 @@
 package com.devknowledge.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.huaban.analysis.jieba.JiebaSegmenter;
+import com.huaban.analysis.jieba.SegToken;
 import com.devknowledge.dto.AiConfigResponse;
 import com.devknowledge.dto.GenerateDemoRequest;
 import com.devknowledge.mapper.DemoMapper;
@@ -174,21 +176,23 @@ public class DemoService {
      */
     private void saveDemoSync(UUID userId, GenerateDemoRequest req, String output) {
         try {
-            // 提取代码块
             String codeContent = extractCodeBlocks(output);
-            // 提取关键词作为标签
-            String[] tags = extractKeywords(req.getPrompt(), output);
+            String title = generateTitle(req.getPrompt());
 
             Demo demo = new Demo();
             demo.setId(UUID.randomUUID());
             demo.setUserId(userId);
-            demo.setTitle(generateTitle(req.getPrompt()));
+            demo.setTitle(title);
             demo.setPrompt(req.getPrompt());
             demo.setFrameworkId(req.getFrameworkId());
             demo.setCodeContent(codeContent.isEmpty() ? output.substring(0, Math.min(output.length(), 500)) : codeContent);
-            demo.setExplanation(""); // 不存完整解释，减少存储
+            demo.setExplanation("");
             demo.setLanguage(req.getLanguage() != null ? req.getLanguage() : "typescript");
+
+            // 用 Jieba TF-IDF 从 prompt + title 提取关键词
+            String[] tags = extractKeywords(req.getPrompt(), title);
             demo.setTags(tags);
+
             demo.setTokensUsed(estimateTokens(output));
             demo.setCreatedAt(Instant.now());
             demoMapper.insert(demo);
@@ -218,29 +222,46 @@ public class DemoService {
         return code.toString().trim();
     }
 
+    /** 中文停用词（高频无意义词汇） */
+    private static final Set<String> STOP_WORDS = Set.of(
+            "的", "了", "是", "在", "我", "有", "和", "就", "不", "人", "都", "一", "一个",
+            "上", "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看", "好",
+            "自己", "这", "他", "她", "它", "们", "那", "里", "为", "什么", "怎么", "如何",
+            "帮我", "写", "请", "可以", "能", "给", "用", "做", "把", "被", "让", "从",
+            "与", "或", "但", "如果", "因为", "所以", "这个", "那个", "一些", "一下",
+            "需要", "想要", "希望", "进行", "实现", "使用", "通过", "然后", "之后", "之前"
+    );
+
     /**
-     * 从 prompt 和输出中提取关键词（简单实现：提取中文词汇和英文标识符）
+     * 使用 Jieba 分词从 prompt 和 title 中提取关键词
+     * 过滤停用词和单字，保留有意义的中英文词汇
      */
-    private String[] extractKeywords(String prompt, String output) {
-        Set<String> keywords = new LinkedHashSet<>();
-        // 从 prompt 提取
-        for (String word : prompt.split("[\\s,，。、;；]+")) {
-            if (word.length() >= 2 && word.length() <= 20) {
-                keywords.add(word);
+    private String[] extractKeywords(String prompt, String title) {
+        String text = prompt + " " + (title != null ? title : "");
+        try {
+            JiebaSegmenter segmenter = new JiebaSegmenter();
+            List<SegToken> tokens = segmenter.process(text, JiebaSegmenter.SegMode.SEARCH);
+            Set<String> seen = new LinkedHashSet<>();
+            for (SegToken token : tokens) {
+                String word = token.word.trim();
+                // 过滤：空、单字、停用词、纯标点
+                if (word.length() < 2 || STOP_WORDS.contains(word) || word.matches("[\\p{P}\\s]+")) {
+                    continue;
+                }
+                seen.add(word);
+                if (seen.size() >= 8) break;
             }
-        }
-        // 从输出提取常见编程关键词
-        String[] codeKeywords = {"function", "const", "let", "var", "return", "import", "export",
-                "class", "interface", "type", "async", "await", "useState", "useEffect",
-                "component", "hook", "state", "props", "render", "template"};
-        String lowerOutput = output.toLowerCase();
-        for (String kw : codeKeywords) {
-            if (lowerOutput.contains(kw)) {
-                keywords.add(kw);
+            return seen.toArray(String[]::new);
+        } catch (Exception e) {
+            log.warn("Jieba 分词失败，回退到简单分割: {}", e.getMessage());
+            Set<String> fallback = new LinkedHashSet<>();
+            for (String word : text.split("[\\s,，。、;；]+")) {
+                if (word.length() >= 2 && word.length() <= 20) {
+                    fallback.add(word);
+                }
             }
+            return fallback.stream().limit(8).toArray(String[]::new);
         }
-        // 限制标签数量
-        return keywords.stream().limit(10).toArray(String[]::new);
     }
 
     // ==================== 保存和查询 ====================
@@ -278,7 +299,9 @@ public class DemoService {
                         .or()
                         .like(Demo::getPrompt, keyword)
                         .or()
-                        .like(Demo::getLanguage, keyword));
+                        .like(Demo::getLanguage, keyword)
+                        .or()
+                        .like(Demo::getTags, keyword));
             }
             return demoMapper.selectPage(pageParam, wrapper);
         }).subscribeOn(Schedulers.boundedElastic());
