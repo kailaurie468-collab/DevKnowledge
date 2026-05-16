@@ -273,9 +273,14 @@ public class DemoService {
         ).subscribeOn(Schedulers.boundedElastic());
     }
 
-    public Mono<Demo> getDemo(UUID id) {
-        return Mono.fromCallable(() -> demoMapper.selectById(id))
-                .subscribeOn(Schedulers.boundedElastic());
+    public Mono<Demo> getDemo(UUID id, UUID userId) {
+        return Mono.fromCallable(() -> {
+            Demo demo = demoMapper.selectById(id);
+            if (demo != null && !demo.getUserId().equals(userId)) {
+                return null;  // 不属于当前用户，返回 403
+            }
+            return demo;
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     public Mono<Void> deleteDemo(UUID id, UUID userId) {

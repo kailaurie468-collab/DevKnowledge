@@ -60,11 +60,14 @@ public class DemoController {
     }
 
     @GetMapping("/{id}")
-    public Mono<ResponseEntity<Demo>> getDemo(@PathVariable UUID id) {
-        return demoService.getDemo(id)
+    public Mono<ResponseEntity<Demo>> getDemo(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable UUID id) {
+        UUID userId = extractUserId(authHeader);
+        return demoService.getDemo(id, userId)
                 .map(demo -> demo != null
                         ? ResponseEntity.ok(demo)
-                        : ResponseEntity.notFound().build());
+                        : ResponseEntity.status(403).build());
     }
 
     @DeleteMapping("/{id}")
