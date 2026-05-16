@@ -264,13 +264,24 @@ public class DemoService {
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
-    public Mono<List<Demo>> getUserDemos(UUID userId) {
-        return Mono.fromCallable(() ->
-                demoMapper.selectList(
-                        new LambdaQueryWrapper<Demo>()
-                                .eq(Demo::getUserId, userId)
-                                .orderByDesc(Demo::getCreatedAt))
-        ).subscribeOn(Schedulers.boundedElastic());
+    public Mono<com.baomidou.mybatisplus.extension.plugins.pagination.Page<Demo>> getUserDemos(
+            UUID userId, int page, int size, String keyword) {
+        return Mono.fromCallable(() -> {
+            com.baomidou.mybatisplus.extension.plugins.pagination.Page<Demo> pageParam =
+                    new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(page, size);
+            LambdaQueryWrapper<Demo> wrapper = new LambdaQueryWrapper<Demo>()
+                    .eq(Demo::getUserId, userId)
+                    .orderByDesc(Demo::getCreatedAt);
+            if (keyword != null && !keyword.isBlank()) {
+                wrapper.and(w -> w
+                        .like(Demo::getTitle, keyword)
+                        .or()
+                        .like(Demo::getPrompt, keyword)
+                        .or()
+                        .like(Demo::getLanguage, keyword));
+            }
+            return demoMapper.selectPage(pageParam, wrapper);
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     public Mono<Demo> getDemo(UUID id, UUID userId) {

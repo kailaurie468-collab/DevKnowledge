@@ -110,12 +110,27 @@ export function DemoPage() {
   const [frameworks, setFrameworks] = useState<Framework[]>([])
   const [demos, setDemos] = useState<Demo[]>([])
   const [selectedDemo, setSelectedDemo] = useState<Demo | null>(null)
+  const [demoPage, setDemoPage] = useState(1)
+  const [demoTotalPages, setDemoTotalPages] = useState(1)
+  const [demoTotal, setDemoTotal] = useState(0)
+  const [demoKeyword, setDemoKeyword] = useState('')
   const { isStreaming, output, events, stream, reset } = useSSE()
+
+  const fetchDemos = (page = 1, keyword = demoKeyword) => {
+    demosApi.getDemos({ page, size: 6, keyword: keyword || undefined })
+      .then(res => {
+        setDemos(res.records)
+        setDemoTotalPages(res.pages)
+        setDemoTotal(res.total)
+        setDemoPage(page)
+      })
+      .catch(console.error)
+  }
 
   useEffect(() => {
     knowledgeApi.getFrameworks().then(setFrameworks).catch(console.error)
     if (isAuthenticated) {
-      demosApi.getDemos().then(setDemos).catch(console.error)
+      fetchDemos(1)
     }
   }, [isAuthenticated])
 
@@ -137,9 +152,7 @@ export function DemoPage() {
           }
         },
         onDone: () => {
-          if (isAuthenticated) {
-            demosApi.getDemos().then(setDemos).catch(console.error)
-          }
+          if (isAuthenticated) fetchDemos(1)
         },
       })
     } catch (err) {
@@ -239,41 +252,88 @@ export function DemoPage() {
       )}
 
       {/* 历史记录 */}
-      {isAuthenticated && demos.length > 0 && (
+      {isAuthenticated && (
         <div>
-          <h2 className="text-sm font-medium text-gray-500 mb-3">历史记录</h2>
-          <div className="space-y-2">
-            {demos.map(demo => (
-              <div key={demo.id} className="flex items-stretch gap-2">
-                <button
-                  onClick={() => setSelectedDemo(demo)}
-                  className="flex-1 text-left p-3 border border-gray-200 rounded-lg hover:border-primary-300 transition-all"
-                >
-                  <h3 className="font-medium text-sm text-gray-900">{demo.title}</h3>
-                  <p className="text-xs text-gray-500 truncate">{demo.prompt}</p>
-                </button>
-                <button
-                  onClick={async () => {
-                    if (!confirm('确定删除此 Demo？')) return
-                    try {
-                      await demosApi.deleteDemo(demo.id)
-                      setDemos(prev => prev.filter(d => d.id !== demo.id))
-                      if (selectedDemo?.id === demo.id) setSelectedDemo(null)
-                      notify('已删除', 'success')
-                    } catch (err) {
-                      notify(err instanceof Error ? err.message : '删除失败', 'error')
-                    }
-                  }}
-                  className="px-2 text-gray-400 hover:text-red-500 transition-colors"
-                  title="删除"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
-              </div>
-            ))}
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-gray-500">历史记录 {demoTotal > 0 && `(${demoTotal})`}</h2>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={demoKeyword}
+                onChange={e => setDemoKeyword(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') fetchDemos(1, demoKeyword) }}
+                placeholder="搜索标题、描述..."
+                className="px-2 py-1 border border-gray-300 rounded text-xs w-40 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              />
+              <button
+                onClick={() => fetchDemos(1, demoKeyword)}
+                className="px-2 py-1 text-xs text-primary-600 hover:bg-primary-50 rounded transition-colors"
+              >
+                搜索
+              </button>
+            </div>
           </div>
+
+          {demos.length > 0 ? (
+            <>
+              <div className="space-y-2">
+                {demos.map(demo => (
+                  <div key={demo.id} className="flex items-stretch gap-2">
+                    <button
+                      onClick={() => setSelectedDemo(demo)}
+                      className="flex-1 text-left p-3 border border-gray-200 rounded-lg hover:border-primary-300 transition-all"
+                    >
+                      <h3 className="font-medium text-sm text-gray-900">{demo.title}</h3>
+                      <p className="text-xs text-gray-500 truncate">{demo.prompt}</p>
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (!confirm('确定删除此 Demo？')) return
+                        try {
+                          await demosApi.deleteDemo(demo.id)
+                          setDemos(prev => prev.filter(d => d.id !== demo.id))
+                          setDemoTotal(prev => prev - 1)
+                          if (selectedDemo?.id === demo.id) setSelectedDemo(null)
+                          notify('已删除', 'success')
+                        } catch (err) {
+                          notify(err instanceof Error ? err.message : '删除失败', 'error')
+                        }
+                      }}
+                      className="px-2 text-gray-400 hover:text-red-500 transition-colors"
+                      title="删除"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* 分页 */}
+              {demoTotalPages > 1 && (
+                <div className="flex items-center justify-center gap-2 mt-3">
+                  <button
+                    onClick={() => fetchDemos(demoPage - 1)}
+                    disabled={demoPage <= 1}
+                    className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    上一页
+                  </button>
+                  <span className="text-xs text-gray-500">{demoPage} / {demoTotalPages}</span>
+                  <button
+                    onClick={() => fetchDemos(demoPage + 1)}
+                    disabled={demoPage >= demoTotalPages}
+                    className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    下一页
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-gray-400 text-sm">暂无记录</p>
+          )}
         </div>
       )}
     </div>

@@ -1,5 +1,7 @@
 package com.devknowledge.config;
 
+import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
+import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.devknowledge.model.StringArrayTypeHandler;
 import com.devknowledge.model.UuidTypeHandler;
 import org.apache.ibatis.session.SqlSessionFactory;
@@ -10,6 +12,13 @@ import java.util.UUID;
 
 @Configuration
 public class MyBatisPlusConfig {
+
+    @Bean
+    public MybatisPlusInterceptor mybatisPlusInterceptor() {
+        MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
+        interceptor.addInnerInterceptor(new PaginationInnerInterceptor());
+        return interceptor;
+    }
 
     @Bean
     public org.apache.ibatis.type.TypeHandlerRegistry typeHandlerRegistry(SqlSessionFactory sqlSessionFactory) {

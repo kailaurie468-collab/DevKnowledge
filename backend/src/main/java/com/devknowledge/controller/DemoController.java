@@ -52,10 +52,13 @@ public class DemoController {
     }
 
     @GetMapping
-    public Mono<ResponseEntity<List<Demo>>> getDemos(
-            @RequestHeader("Authorization") String authHeader) {
+    public Mono<ResponseEntity<com.baomidou.mybatisplus.extension.plugins.pagination.Page<Demo>>> getDemos(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "6") int size,
+            @RequestParam(required = false) String keyword) {
         UUID userId = extractUserId(authHeader);
-        return demoService.getUserDemos(userId)
+        return demoService.getUserDemos(userId, page, size, keyword)
                 .map(ResponseEntity::ok);
     }
 
