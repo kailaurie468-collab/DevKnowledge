@@ -18,4 +18,7 @@ public class GenerateDemoRequest {
 
     /** 编程语言 */
     private String language;
+
+    /** 最大推理轮数（可选，默认 5，范围 1-8） */
+    private Integer maxIterations;
 }

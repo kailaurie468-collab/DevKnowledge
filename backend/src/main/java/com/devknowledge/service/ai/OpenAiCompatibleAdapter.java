@@ -59,7 +59,13 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
         List<Map<String, String>> msgList = new ArrayList<>();
         msgList.add(Map.of("role", "system", "content", systemPrompt));
         for (ChatMessage msg : messages) {
-            msgList.add(Map.of("role", msg.role(), "content", msg.content()));
+            Map<String, String> msgMap = new LinkedHashMap<>();
+            msgMap.put("role", msg.role());
+            msgMap.put("content", msg.content());
+            if (msg.name() != null) {
+                msgMap.put("name", msg.name());
+            }
+            msgList.add(msgMap);
         }
 
         // 将自定义的tools 按照openai格式 封装进请求的body
@@ -137,6 +143,7 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
 
                             // 工具调用：按 index 累积 name + arguments
                             /*
+                             小米响应：
                             "message": {
                                   "role": "assistant",
                                   "content": null, // 此时通常没有文本内容
@@ -151,6 +158,14 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
                                     }
                                   ]
                                 }
+                            openai可能会拆成多个：
+                            chunk 1:  delta: { tool_calls: [{ index: 0, id: "call_abc", type: "function",
+                                   function: { name: "search_links", arguments: "" } }] }
+                            chunk 2:  delta: { tool_calls: [{ index: 0, function: { arguments: "{\"qu" } }] }
+                            chunk 3:  delta: { tool_calls: [{ index: 0, function: { arguments: "ery\": \"Re" } }] }
+                            chunk 4:  delta: { tool_calls: [{ index: 0, function: { arguments: "act hooks\"}" } }] }
+                            chunk 5:  delta: { content: "我帮你搜索一下..." }   ← 普通文本回复
+
                             chunk1: index=0, name="search", arguments=""     → slot[0]="search", slot[1]=""
                             chunk2: index=0, arguments="{\"query"            → slot[0]="search", slot[1]="{\"query"
                             chunk3: index=0, arguments="\":\"hello\"}"       → slot[0]="search", slot[1]="{\"query\":\"hello\"}"

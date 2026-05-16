@@ -124,7 +124,8 @@ public class DemoService {
             // 3. 运行 ReAct Agent，收集输出并保存
             StringBuilder outputCollector = new StringBuilder();
 
-            return reactAgent.run(systemPrompt, req.getPrompt(), tools, handlers, config)
+            int maxIter = req.getMaxIterations() != null ? req.getMaxIterations() : 5;
+            return reactAgent.run(systemPrompt, req.getPrompt(), tools, handlers, config, maxIter)
                     .map(chunk -> {
                         // 收集文本输出
                         if (chunk.getType() == AiChunkType.TEXT && chunk.getContent() != null) {
@@ -318,6 +319,12 @@ public class DemoService {
         prompt.append("- 每个语句独占一行，不要把多个语句写在同一行\n");
         prompt.append("- 代码用 ```language 包裹，language 替换为实际语言\n");
         prompt.append("- 解释要简洁，不要重复代码内容\n");
+
+        prompt.append("\n工具使用规则：\n");
+        prompt.append("- 你有以下工具可用：search_links（搜索框架文档链接）、get_framework_info（获取框架信息）\n");
+        prompt.append("- 优先用工具获取准确信息，不要凭记忆编造文档链接\n");
+        prompt.append("- 拿到足够信息后立即给出完整回答，不要重复调用相同工具\n");
+        prompt.append("- 如果工具返回空结果，直接基于已有知识回答\n");
 
         return prompt.toString();
     }

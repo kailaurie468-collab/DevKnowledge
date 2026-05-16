@@ -39,6 +39,13 @@ public interface AiProviderAdapter {
 
     /**
      * 对话消息
+     * @param role    角色：system / user / assistant / tool
+     * @param content 消息内容
+     * @param name    工具名（role=tool 时必填，其他情况为 null）
      */
-    record ChatMessage(String role, String content) {}
+    record ChatMessage(String role, String content, String name) {
+        ChatMessage(String role, String content) {
+            this(role, content, null);
+        }
+    }
 }
