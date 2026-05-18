@@ -197,11 +197,57 @@ public List<KbDocument> searchKb(UUID kbId, String query) {
 | 知识库文档上限 | 200 个/库 | 防止数据库过大 |
 | 搜索结果上限 | 20 条 | 性能考虑 |
 
+## 知识库介入 Demo 生成
+
+用户生成 Demo 时可选择是否开启知识库介入。开启后，ReActAgent 在推理过程中会多一个 `search_kb` 工具，可搜索用户知识库中的文档内容。
+
+### 改动点
+
+**`GenerateDemoRequest.java`** — 新增可选字段：
+```java
+/** 关联知识库 ID（可选，传入后 ReActAgent 会使用知识库搜索工具） */
+private UUID kbId;
+```
+
+**`DemoService.generateDemo()`** — 条件注入 KB 工具：
+```java
+List<AiFunction> tools = new ArrayList<>(List.of(SEARCH_LINKS, GET_FRAMEWORK_INFO));
+Map<String, ToolHandler> handlers = buildToolHandlers();
+
+if (req.getKbId() != null) {
+    tools.add(SEARCH_KB);
+    handlers.put("search_kb", buildSearchKbHandler(req.getKbId()));
+}
+```
+
+**新增工具定义** `SEARCH_KB`：
+- 工具名：`search_kb`
+- 描述：搜索用户知识库中的文档内容
+- 参数：`{ "query": "搜索关键词" }`
+- 执行逻辑：调用 `kbService.searchKb(kbId, query)`，返回匹配文档的 content 片段
+
+**前端 `DemoPage.tsx`** — 新增知识库选择器：
+- 生成区域增加一个下拉框，列出用户的知识库
+- 选择后将 `kbId` 传入 `generate` 请求
+- 不选则不传，不启用知识库介入
+
+### ReAct Agent 行为变化
+
+```
+未开启 KB：
+  search_links → 搜索公共知识链接
+  get_framework_info → 获取框架信息
+
+开启 KB 后（多一个工具）：
+  search_links → 搜索公共知识链接
+  get_framework_info → 获取框架信息
+  search_kb → 搜索用户上传的文档内容（优先用于相关性更高的私有知识）
+```
+
 ## 不改动的部分
 
 - 现有 `knowledge_links` 公共知识库（与用户知识库并存）
-- ReAct Agent（Phase 3c 才会集成 Wiki 工具）
-- Demo 生成流程（Phase 3b/3c 才会集成增强检索）
+- ReAct Agent 核心引擎（工具调用机制已通用，只需注册新工具）
 
 ## 验证方式
 
@@ -210,3 +256,5 @@ public List<KbDocument> searchKb(UUID kbId, String query) {
 3. 搜索功能 → 输入关键词 → 返回匹配文档
 4. 批量上传 → 验证异步处理 + 进度状态
 5. 删除知识库 → 验证级联删除文档
+6. Demo 生成 → 选择知识库 → 验证 ReActAgent 调用 search_kb 工具
+7. Demo 生成 → 不选知识库 → 验证不调用 search_kb
