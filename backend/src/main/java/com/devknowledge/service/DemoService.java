@@ -42,58 +42,10 @@ public class DemoService {
     private final AiConfigService aiConfigService;
     private final DemoMapper demoMapper;
     private final FrameworkMapper frameworkMapper;
-    private final KnowledgeService knowledgeService;
-    private final KbService kbService;
+    private final DemoToolProvider toolProvider;
 
     @Value("${jwt.secret}")
     private String aesSecret;
-
-    // ==================== ReAct 工具定义 ====================
-
-    /** 搜索知识库 */
-    private static final AiFunction SEARCH_LINKS = new AiFunction(
-            "search_links",
-            "搜索框架文档链接，获取官方文档和最佳实践",
-            """
-            {
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "搜索关键词，如 'useEffect' 或 '表单验证'" }
-                },
-                "required": ["query"]
-            }
-            """
-    );
-
-    /** 获取框架信息 */
-    private static final AiFunction GET_FRAMEWORK_INFO = new AiFunction(
-            "get_framework_info",
-            "获取指定框架的基本信息和官方文档地址",
-            """
-            {
-                "type": "object",
-                "properties": {
-                    "slug": { "type": "string", "description": "框架标识，如 'react'、'vue'、'spring-boot'" }
-                },
-                "required": ["slug"]
-            }
-            """
-    );
-
-    /** 搜索用户知识库 */
-    private static final AiFunction SEARCH_KB = new AiFunction(
-            "search_kb",
-            "搜索用户知识库中的文档内容，获取私有知识和参考资料",
-            """
-            {
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "搜索关键词" }
-                },
-                "required": ["query"]
-            }
-            """
-    );
 
     // ==================== 核心方法 ====================
 
@@ -136,13 +88,13 @@ public class DemoService {
 
             // 2. 构建系统提示词和工具
             String systemPrompt = buildSystemPrompt(req);
-            List<AiFunction> tools = new ArrayList<>(List.of(SEARCH_LINKS, GET_FRAMEWORK_INFO));
-            Map<String, ToolHandler> handlers = buildToolHandlers();
+            List<AiFunction> tools = new ArrayList<>(toolProvider.getBaseTools());
+            Map<String, ToolHandler> handlers = new HashMap<>(toolProvider.getBaseHandlers());
 
             // 知识库介入：动态注入 search_kb 工具
             if (req.getKbId() != null) {
-                tools.add(SEARCH_KB);
-                handlers.put("search_kb", buildSearchKbHandler(userId, req.getKbId()));
+                tools.add(toolProvider.getKbTool());
+                handlers.put("search_kb", toolProvider.getKbHandler(req.getKbId()));
             }
 
             // 3. 运行 ReAct Agent，收集输出并保存
@@ -388,102 +340,6 @@ public class DemoService {
         prompt.append("- 如果工具返回空结果，直接基于已有知识回答\n");
 
         return prompt.toString();
-    }
-
-    /**
-     * 构建工具处理器映射
-     * 注册每个工具的实际执行逻辑
-     */
-    private Map<String, ToolHandler> buildToolHandlers() {
-        Map<String, ToolHandler> handlers = new HashMap<>();
-
-        // search_links: 搜索知识链接
-        handlers.put("search_links", args -> {
-            try {
-                String query = extractJsonString(args, "query");
-                log.info("工具 search_links 执行，query={}", query);
-                var results = knowledgeService.searchLinks(query).block();
-                log.info("工具 search_links 结果数: {}", results != null ? results.size() : 0);
-                if (results == null || results.isEmpty()) return "未找到相关文档";
-
-                StringBuilder sb = new StringBuilder();
-                for (var r : results) {
-                    sb.append("- ").append(r.getLink().getTitle())
-                            .append(": ").append(r.getLink().getUrl());
-                    if (r.getLink().getDescription() != null) {
-                        sb.append(" (").append(r.getLink().getDescription()).append(")");
-                    }
-                    sb.append("\n");
-                }
-                return sb.toString();
-            } catch (Exception e) {
-                return "搜索失败: " + e.getMessage();
-            }
-        });
-
-        // get_framework_info: 获取框架信息
-        handlers.put("get_framework_info", args -> {
-            try {
-                String slug = extractJsonString(args, "slug");
-                Framework fw = frameworkMapper.selectOne(
-                        new LambdaQueryWrapper<Framework>().eq(Framework::getSlug, slug));
-                if (fw == null) return "未找到框架: " + slug;
-                return String.format("框架: %s\n文档: %s\n分类: %s\n简介: %s",
-                        fw.getName(), fw.getBaseUrl(), fw.getCategory(), fw.getDescription());
-            } catch (Exception e) {
-                return "获取框架信息失败: " + e.getMessage();
-            }
-        });
-
-        return handlers;
-    }
-
-    /**
-     * 构建知识库搜索工具处理器
-     * 搜索用户知识库中匹配的文档，返回内容片段
-     */
-    private ToolHandler buildSearchKbHandler(UUID userId, UUID kbId) {
-        return args -> {
-            try {
-                String query = extractJsonString(args, "query");
-                log.info("工具 search_kb 执行，kbId={}, query={}", kbId, query);
-                var results = kbService.searchKb(kbId, query).block();
-                if (results == null || results.isEmpty()) return "知识库中未找到相关内容";
-
-                StringBuilder sb = new StringBuilder();
-                for (var doc : results) {
-                    sb.append("【").append(doc.getFilename()).append("】\n");
-                    String content = doc.getContent();
-                    if (content != null) {
-                        int idx = content.toLowerCase().indexOf(query.toLowerCase());
-                        if (idx >= 0) {
-                            int start = Math.max(0, idx - 100);
-                            int end = Math.min(content.length(), idx + query.length() + 400);
-                            sb.append("...").append(content, start, end).append("...\n");
-                        } else {
-                            sb.append(content, 0, Math.min(content.length(), 500)).append("\n");
-                        }
-                    }
-                    sb.append("\n");
-                }
-                return sb.toString();
-            } catch (Exception e) {
-                return "知识库搜索失败: " + e.getMessage();
-            }
-        };
-    }
-
-    /**
-     * 从 JSON 字符串中提取指定字段值
-     */
-    private String extractJsonString(String json, String field) {
-        try {
-            com.fasterxml.jackson.databind.JsonNode node =
-                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(json);
-            return node.has(field) ? node.get(field).asText() : "";
-        } catch (Exception e) {
-            return "";
-        }
     }
 
     private String generateTitle(String prompt) {
