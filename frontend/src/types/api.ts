@@ -70,6 +70,7 @@ export interface GenerateDemoRequest {
   prompt: string
   frameworkId?: string
   language?: string
+  maxIterations?: number
   kbId?: string
 }
 
@@ -145,9 +146,13 @@ export interface KnowledgeBase {
 
 export interface KbDocument {
   id: string
+  kbId: string
   filename: string
   fileType: string
-  chunkCount: number
+  fileSize: number
+  content?: string
+  status: 'processing' | 'ready' | 'error'
+  errorMessage?: string
   createdAt: string
 }
 

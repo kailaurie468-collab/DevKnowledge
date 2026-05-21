@@ -251,7 +251,7 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
                 .bodyValue(body)
                 .retrieve()
                 .bodyToFlux(String.class)
-                .doOnNext(line -> log.debug("原始响应: {}", line))
+//                .doOnNext(line -> log.debug("原始响应: {}", line))
                 .filter(line -> line != null && !line.isBlank() && !line.equals("[DONE]"))
                 .mapNotNull(line -> {
                     try {

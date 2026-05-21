@@ -1,9 +1,10 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import { demosApi } from '@/api/demos'
+import { kbApi } from '@/api/kb'
 import { useSSE } from '@/hooks/useSSE'
 import { useAuthStore } from '@/stores/authStore'
 import { useNotify } from '@/stores/notify'
-import type { Demo, Framework } from '@/types/api'
+import type { Demo, Framework, KnowledgeBase } from '@/types/api'
 import { knowledgeApi } from '@/api/knowledge'
 
 /** Inline Markdown 格式化：加粗、行内代码、斜体、链接 */
@@ -114,6 +115,8 @@ export function DemoPage() {
   const [demoTotalPages, setDemoTotalPages] = useState(1)
   const [demoTotal, setDemoTotal] = useState(0)
   const [demoKeyword, setDemoKeyword] = useState('')
+  const [kbs, setKbs] = useState<KnowledgeBase[]>([])
+  const [selectedKbId, setSelectedKbId] = useState('')
   const { isStreaming, output, events, stream, reset } = useSSE()
 
   const fetchDemos = (page = 1, keyword = demoKeyword) => {
@@ -131,6 +134,7 @@ export function DemoPage() {
     knowledgeApi.getFrameworks().then(setFrameworks).catch(console.error)
     if (isAuthenticated) {
       fetchDemos(1)
+      kbApi.getKbs().then(setKbs).catch(console.error)
     }
   }, [isAuthenticated])
 
@@ -144,6 +148,7 @@ export function DemoPage() {
           prompt,
           language,
           frameworkId: frameworkId || undefined,
+          kbId: selectedKbId || undefined,
         })(signal),
       {
         onChunk: (chunk) => {
@@ -194,6 +199,18 @@ export function DemoPage() {
               <option key={fw.id} value={fw.id}>{fw.name}</option>
             ))}
           </select>
+          {kbs.length > 0 && (
+            <select
+              value={selectedKbId}
+              onChange={e => setSelectedKbId(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-md text-sm"
+            >
+              <option value="">不使用知识库</option>
+              {kbs.map(kb => (
+                <option key={kb.id} value={kb.id}>{kb.name}</option>
+              ))}
+            </select>
+          )}
           <button
             onClick={handleGenerate}
             disabled={isStreaming || !prompt.trim()}

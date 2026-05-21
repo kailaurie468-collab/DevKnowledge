@@ -43,6 +43,7 @@ public class DemoService {
     private final DemoMapper demoMapper;
     private final FrameworkMapper frameworkMapper;
     private final KnowledgeService knowledgeService;
+    private final KbService kbService;
 
     @Value("${jwt.secret}")
     private String aesSecret;
@@ -75,6 +76,21 @@ public class DemoService {
                     "slug": { "type": "string", "description": "框架标识，如 'react'、'vue'、'spring-boot'" }
                 },
                 "required": ["slug"]
+            }
+            """
+    );
+
+    /** 搜索用户知识库 */
+    private static final AiFunction SEARCH_KB = new AiFunction(
+            "search_kb",
+            "搜索用户知识库中的文档内容，获取私有知识和参考资料",
+            """
+            {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "搜索关键词" }
+                },
+                "required": ["query"]
             }
             """
     );
@@ -120,8 +136,14 @@ public class DemoService {
 
             // 2. 构建系统提示词和工具
             String systemPrompt = buildSystemPrompt(req);
-            List<AiFunction> tools = List.of(SEARCH_LINKS, GET_FRAMEWORK_INFO);
+            List<AiFunction> tools = new ArrayList<>(List.of(SEARCH_LINKS, GET_FRAMEWORK_INFO));
             Map<String, ToolHandler> handlers = buildToolHandlers();
+
+            // 知识库介入：动态注入 search_kb 工具
+            if (req.getKbId() != null) {
+                tools.add(SEARCH_KB);
+                handlers.put("search_kb", buildSearchKbHandler(userId, req.getKbId()));
+            }
 
             // 3. 运行 ReAct Agent，收集输出并保存
             StringBuilder outputCollector = new StringBuilder();
@@ -414,6 +436,41 @@ public class DemoService {
         });
 
         return handlers;
+    }
+
+    /**
+     * 构建知识库搜索工具处理器
+     * 搜索用户知识库中匹配的文档，返回内容片段
+     */
+    private ToolHandler buildSearchKbHandler(UUID userId, UUID kbId) {
+        return args -> {
+            try {
+                String query = extractJsonString(args, "query");
+                log.info("工具 search_kb 执行，kbId={}, query={}", kbId, query);
+                var results = kbService.searchKb(kbId, query).block();
+                if (results == null || results.isEmpty()) return "知识库中未找到相关内容";
+
+                StringBuilder sb = new StringBuilder();
+                for (var doc : results) {
+                    sb.append("【").append(doc.getFilename()).append("】\n");
+                    String content = doc.getContent();
+                    if (content != null) {
+                        int idx = content.toLowerCase().indexOf(query.toLowerCase());
+                        if (idx >= 0) {
+                            int start = Math.max(0, idx - 100);
+                            int end = Math.min(content.length(), idx + query.length() + 400);
+                            sb.append("...").append(content, start, end).append("...\n");
+                        } else {
+                            sb.append(content, 0, Math.min(content.length(), 500)).append("\n");
+                        }
+                    }
+                    sb.append("\n");
+                }
+                return sb.toString();
+            } catch (Exception e) {
+                return "知识库搜索失败: " + e.getMessage();
+            }
+        };
     }
 
     /**

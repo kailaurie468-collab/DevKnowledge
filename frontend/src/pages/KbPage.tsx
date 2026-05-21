@@ -2,14 +2,14 @@ import { useState, useEffect, useCallback } from 'react'
 import { kbApi } from '@/api/kb'
 import { useAuthStore } from '@/stores/authStore'
 import { SearchBar } from '@/components/knowledge/SearchBar'
-import type { KnowledgeBase, KbDocument, KbChunk } from '@/types/api'
+import type { KnowledgeBase, KbDocument } from '@/types/api'
 
 export function KbPage() {
   const { isAuthenticated } = useAuthStore()
   const [kbs, setKbs] = useState<KnowledgeBase[]>([])
   const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null)
   const [documents, setDocuments] = useState<KbDocument[]>([])
-  const [searchResults, setSearchResults] = useState<KbChunk[]>([])
+  const [searchResults, setSearchResults] = useState<KbDocument[]>([])
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -121,8 +121,8 @@ export function KbPage() {
           <h2 className="text-lg font-semibold mb-3">{selectedKb.name}</h2>
 
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">上传文档（MD/TXT）</label>
-            <input type="file" accept=".md,.txt" onChange={handleUpload} className="text-sm" />
+            <label className="block text-sm font-medium text-gray-700 mb-1">上传文档（TXT/MD/PDF/DOCX）</label>
+            <input type="file" accept=".txt,.md,.markdown,.pdf,.docx" onChange={handleUpload} className="text-sm" />
           </div>
 
           {documents.length > 0 && (
@@ -133,7 +133,14 @@ export function KbPage() {
                   <div key={doc.id} className="flex items-center justify-between p-2 border border-gray-200 rounded">
                     <div>
                       <span className="text-sm font-medium">{doc.filename}</span>
-                      <span className="text-xs text-gray-400 ml-2">{doc.chunkCount} 个分块</span>
+                      <span className={`text-xs ml-2 px-1.5 py-0.5 rounded ${
+                        doc.status === 'ready' ? 'bg-green-100 text-green-700' :
+                        doc.status === 'error' ? 'bg-red-100 text-red-700' :
+                        'bg-yellow-100 text-yellow-700'
+                      }`}>
+                        {doc.status === 'ready' ? '就绪' : doc.status === 'error' ? '错误' : '解析中'}
+                      </span>
+                      <span className="text-xs text-gray-400 ml-2">{doc.fileType}</span>
                     </div>
                     <button
                       onClick={() => kbApi.deleteDocument(doc.id).then(() => kbApi.getDocuments(selectedKb.id).then(setDocuments))}
@@ -154,12 +161,15 @@ export function KbPage() {
 
           {searchResults.length > 0 && (
             <div className="space-y-2">
-              {searchResults.map(chunk => (
-                <div key={chunk.id} className="p-3 bg-gray-50 rounded border border-gray-200">
+              {searchResults.map(doc => (
+                <div key={doc.id} className="p-3 bg-gray-50 rounded border border-gray-200">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs text-gray-400">相似度: {(chunk.similarity * 100).toFixed(1)}%</span>
+                    <span className="text-xs font-medium text-gray-600">{doc.filename}</span>
+                    <span className="text-xs text-gray-400">{doc.fileType}</span>
                   </div>
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{chunk.content}</p>
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap line-clamp-5">
+                    {doc.content?.slice(0, 500)}
+                  </p>
                 </div>
               ))}
             </div>

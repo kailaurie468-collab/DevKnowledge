@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { KnowledgeBase, KbDocument, KbChunk } from '@/types/api'
+import type { KnowledgeBase, KbDocument } from '@/types/api'
 
 export const kbApi = {
   createKb: (data: { name: string; description?: string }) =>
@@ -28,6 +28,20 @@ export const kbApi = {
     })
   },
 
+  batchUpload: (kbId: string, files: File[]) => {
+    const formData = new FormData()
+    files.forEach(file => formData.append('files', file))
+    const token = localStorage.getItem('accessToken')
+    return fetch(`/api/kb/${kbId}/documents/batch`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    }).then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return res.json() as Promise<KbDocument[]>
+    })
+  },
+
   getDocuments: (kbId: string) =>
     api.get<KbDocument[]>(`/kb/${kbId}/documents`),
 
@@ -35,5 +49,5 @@ export const kbApi = {
     api.delete<void>(`/kb/documents/${docId}`),
 
   searchKb: (kbId: string, query: string) =>
-    api.get<KbChunk[]>(`/kb/${kbId}/search`, { q: query }),
+    api.get<KbDocument[]>(`/kb/${kbId}/search`, { q: query }),
 }
