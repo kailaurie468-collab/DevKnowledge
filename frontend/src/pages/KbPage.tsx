@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { kbApi } from '@/api/kb'
 import { useAuthStore } from '@/stores/authStore'
 import { SearchBar } from '@/components/knowledge/SearchBar'
@@ -13,6 +13,7 @@ export function KbPage() {
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
   const [showCreate, setShowCreate] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadKbs = useCallback(() => {
     kbApi.getKbs().then(setKbs).catch(console.error)
@@ -98,7 +99,7 @@ export function KbPage() {
           />
           <div className="flex gap-2">
             <button onClick={handleCreate} className="px-3 py-1.5 bg-primary-600 text-white rounded-md text-sm">创建</button>
-            <button onClick={() => setShowCreate(false)} className="px-3 py-1.5 border border-gray-300 rounded-md text-sm">取消</button>
+            <button onClick={() => setShowCreate(false)} className="px-3 py-1.5 border border-gray-300 rounded-md text-sm">← 返回</button>
           </div>
         </div>
       ) : (
@@ -112,22 +113,62 @@ export function KbPage() {
 
       {selectedKb ? (
         <div>
-          <button
-            onClick={() => { setSelectedKb(null); setDocuments([]); setSearchResults([]) }}
-            className="text-sm text-primary-600 hover:underline mb-4"
-          >
-            返回列表
-          </button>
-          <h2 className="text-lg font-semibold mb-3">{selectedKb.name}</h2>
-
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">上传文档（TXT/MD/PDF/DOCX）</label>
-            <input type="file" accept=".txt,.md,.markdown,.pdf,.docx" onChange={handleUpload} className="text-sm" />
+          <div className="flex items-center justify-between mb-4">
+            <button
+              onClick={() => { setSelectedKb(null); setDocuments([]); setSearchResults([]) }}
+              className="text-sm text-primary-600 hover:underline"
+            >
+              ← 返回列表
+            </button>
           </div>
 
-          {documents.length > 0 && (
-            <div className="mb-6">
-              <h3 className="text-sm font-medium text-gray-500 mb-2">文档列表（{documents.length}）</h3>
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-lg font-semibold">{selectedKb.name}</h2>
+            <div className="flex gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".txt,.md,.markdown,.pdf,.docx"
+                onChange={handleUpload}
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-1.5 bg-primary-600 text-white rounded-md text-sm font-medium hover:bg-primary-700 transition-colors"
+              >
+                + 上传文档
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-gray-400 mb-4">支持 TXT / MD / PDF / DOCX，单文件 ≤ 10MB，每库 ≤ 200 个文档</p>
+
+          {/* 搜索栏 */}
+          <div className="mb-4">
+            <SearchBar onSearch={handleSearch} placeholder="在知识库中搜索文档..." />
+          </div>
+
+          {/* 搜索结果 */}
+          {searchResults.length > 0 && (
+            <div className="mb-6 space-y-2">
+              <h3 className="text-sm font-medium text-gray-500">搜索结果（{searchResults.length}）</h3>
+              {searchResults.map(doc => (
+                <div key={doc.id} className="p-3 bg-gray-50 rounded border border-gray-200">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-medium text-gray-600">{doc.filename}</span>
+                    <span className="text-xs text-gray-400">{doc.fileType}</span>
+                  </div>
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap line-clamp-5">
+                    {doc.content?.slice(0, 500)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 文档列表 */}
+          <div>
+            <h3 className="text-sm font-medium text-gray-500 mb-2">文档列表（{documents.length}）</h3>
+            {documents.length > 0 ? (
               <div className="space-y-2">
                 {documents.map(doc => (
                   <div key={doc.id} className="flex items-center justify-between p-2 border border-gray-200 rounded">
@@ -151,29 +192,10 @@ export function KbPage() {
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-
-          <div className="mb-4">
-            <h3 className="text-sm font-medium text-gray-500 mb-2">语义搜索</h3>
-            <SearchBar onSearch={handleSearch} placeholder="在此知识库中搜索..." />
+            ) : (
+              <p className="text-gray-400 text-sm">暂无文档，点击右上角「上传文档」添加</p>
+            )}
           </div>
-
-          {searchResults.length > 0 && (
-            <div className="space-y-2">
-              {searchResults.map(doc => (
-                <div key={doc.id} className="p-3 bg-gray-50 rounded border border-gray-200">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium text-gray-600">{doc.filename}</span>
-                    <span className="text-xs text-gray-400">{doc.fileType}</span>
-                  </div>
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap line-clamp-5">
-                    {doc.content?.slice(0, 500)}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       ) : (
         <div className="space-y-2">

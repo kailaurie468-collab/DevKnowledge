@@ -199,18 +199,18 @@ export function DemoPage() {
               <option key={fw.id} value={fw.id}>{fw.name}</option>
             ))}
           </select>
-          {kbs.length > 0 && (
-            <select
-              value={selectedKbId}
-              onChange={e => setSelectedKbId(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md text-sm"
-            >
-              <option value="">不使用知识库</option>
-              {kbs.map(kb => (
-                <option key={kb.id} value={kb.id}>{kb.name}</option>
-              ))}
-            </select>
-          )}
+          <select
+            value={selectedKbId}
+            onChange={e => setSelectedKbId(e.target.value)}
+            disabled={kbs.length === 0}
+            className="px-3 py-2 border border-gray-300 rounded-md text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            title={kbs.length === 0 ? '暂无知识库，请先在知识库页面创建' : ''}
+          >
+            <option value="">{kbs.length > 0 ? '不使用知识库' : '暂无知识库'}</option>
+            {kbs.map(kb => (
+              <option key={kb.id} value={kb.id}>{kb.name}</option>
+            ))}
+          </select>
           <button
             onClick={handleGenerate}
             disabled={isStreaming || !prompt.trim()}

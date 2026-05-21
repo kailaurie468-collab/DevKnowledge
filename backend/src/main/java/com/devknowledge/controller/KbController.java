@@ -6,12 +6,13 @@ import com.devknowledge.model.KnowledgeBase;
 import com.devknowledge.security.JwtTokenProvider;
 import com.devknowledge.service.KbService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -59,35 +60,43 @@ public class KbController {
                 .then(Mono.just(ResponseEntity.noContent().<Void>build()));
     }
 
-    @PostMapping("/{id}/documents")
+    @PostMapping(value = "/{id}/documents", consumes = "multipart/form-data")
     public Mono<ResponseEntity<KbDocument>> uploadDocument(
             @RequestHeader("Authorization") String authHeader,
             @PathVariable UUID id,
-            @RequestParam("file") MultipartFile file) throws IOException {
+            @RequestPart("file") Mono<FilePart> file) {
         UUID userId = extractUserId(authHeader);
         if (userId == null) return Mono.just(ResponseEntity.status(401).build());
-        return kbService.uploadDocument(id, file.getOriginalFilename(), file.getSize(), file.getBytes())
+        return file.flatMap(fp -> DataBufferUtils.join(fp.content())
+                        .map(dataBuffer -> {
+                            byte[] bytes = new byte[dataBuffer.readableByteCount()];
+                            dataBuffer.read(bytes);
+                            DataBufferUtils.release(dataBuffer);
+                            return bytes;
+                        })
+                        .flatMap(bytes ->
+                                kbService.uploadDocument(id, fp.filename(), bytes.length, bytes)))
                 .map(ResponseEntity::ok);
     }
 
-    @PostMapping("/{id}/documents/batch")
+    @PostMapping(value = "/{id}/documents/batch", consumes = "multipart/form-data")
     public Mono<ResponseEntity<List<KbDocument>>> batchUpload(
             @RequestHeader("Authorization") String authHeader,
             @PathVariable UUID id,
-            @RequestParam("files") MultipartFile[] files) throws IOException {
+            @RequestPart("files") Flux<FilePart> files) {
         UUID userId = extractUserId(authHeader);
         if (userId == null) return Mono.just(ResponseEntity.status(401).build());
-        if (files.length > 10) return Mono.just(ResponseEntity.badRequest().build());
 
-        List<Mono<KbDocument>> uploads = new ArrayList<>();
-        for (MultipartFile file : files) {
-            uploads.add(kbService.uploadDocument(id, file.getOriginalFilename(), file.getSize(), file.getBytes()));
-        }
-        return Mono.zip(uploads, results -> {
-            List<KbDocument> docs = new ArrayList<>();
-            for (Object r : results) docs.add((KbDocument) r);
-            return docs;
-        }).map(ResponseEntity::ok);
+        return files.take(10).flatMap(fp ->
+                DataBufferUtils.join(fp.content())
+                        .map(dataBuffer -> {
+                            byte[] bytes = new byte[dataBuffer.readableByteCount()];
+                            dataBuffer.read(bytes);
+                            DataBufferUtils.release(dataBuffer);
+                            return bytes;
+                        })
+                        .flatMap(bytes -> kbService.uploadDocument(id, fp.filename(), bytes.length, bytes))
+        ).collectList().map(ResponseEntity::ok);
     }
 
     @GetMapping("/{id}/documents")
