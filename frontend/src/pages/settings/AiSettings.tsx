@@ -36,10 +36,10 @@ export function AiSettings() {
   const loadConfigs = () => {
     settingsApi.getAllConfigs().then(list => {
       setConfigs(list)
-      // 默认选中激活配置
-      const active = list.find(c => c.isActive)
-      if (active && !selectedId) {
-        selectConfig(active)
+      // 默认选中激活配置，没有则选第一个
+      if (!selectedId) {
+        const active = list.find(c => c.isActive) || list[0]
+        if (active) selectConfig(active)
       }
     }).catch(console.error)
   }
@@ -106,7 +106,6 @@ export function AiSettings() {
 
   const handleTest = async () => {
     setTesting(true)
-    setTestResult(null)
     try {
       const res = await settingsApi.testAiConfig()
       setTestResult(res)
@@ -158,7 +157,7 @@ export function AiSettings() {
             {configs.map(config => (
               <button
                 key={config.id}
-                onClick={() => { selectConfig(config); handleActivate(config.id!) }}
+                onClick={() => selectConfig(config)}
                 className={`w-full text-left p-3 rounded-lg border transition-all ${
                   selectedId === config.id
                     ? 'border-primary-500 bg-primary-50'
@@ -185,9 +184,19 @@ export function AiSettings() {
 
         {/* 右侧：配置详情表单 */}
         <div className="lg:col-span-2 border border-gray-200 rounded-lg p-6">
-          <h3 className="text-sm font-medium text-gray-500 mb-4">
-            {isNew ? '新建配置' : '配置详情'}
-          </h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-gray-500">
+              {isNew ? '新建配置' : '配置详情'}
+            </h3>
+            {isNew && configs.length > 0 && (
+              <button
+                onClick={() => { setIsNew(false); const first = configs.find(c => c.isActive) || configs[0]; if (first) selectConfig(first) }}
+                className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                ← 返回
+              </button>
+            )}
+          </div>
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">配置名称</label>
@@ -264,11 +273,20 @@ export function AiSettings() {
               </button>
               <button
                 onClick={handleTest}
-                disabled={testing}
-                className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+                disabled={testing || isNew}
+                title={isNew ? '请先保存配置后再测试' : ''}
+                className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {testing ? '测试中...' : '测试连接'}
               </button>
+              {!isNew && selectedId && !configs.find(c => c.id === selectedId)?.isActive && (
+                <button
+                  onClick={() => handleActivate(selectedId!)}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium hover:bg-gray-50"
+                >
+                  设为默认
+                </button>
+              )}
               {!isNew && configs.length > 1 && (
                 <button
                   onClick={handleDelete}

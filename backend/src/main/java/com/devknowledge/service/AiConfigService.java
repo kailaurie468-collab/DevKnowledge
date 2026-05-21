@@ -9,6 +9,7 @@ import com.devknowledge.model.UserAiConfig;
 import com.devknowledge.security.AesUtil;
 import com.devknowledge.service.ai.AiProviderAdapter;
 import com.devknowledge.service.ai.AiProviderFactory;
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -136,6 +137,9 @@ public class AiConfigService {
                     throw new RuntimeException("新建配置必须提供 API Key");
                 }
 
+                // 先取消旧的激活配置，避免唯一约束冲突
+                deactivateAll(userId);
+
                 target = new UserAiConfig();
                 target.setId(UUID.randomUUID());
                 target.setUserId(userId);
@@ -208,16 +212,28 @@ public class AiConfigService {
     }
 
     /**
-     * 将指定配置设为激活，其他配置取消激活
+     * 取消用户所有激活配置（insert 前调用，避免唯一约束冲突）
      */
-    private void activateConfig(UUID userId, UUID configId) {
-        // 先取消该用户所有激活
+    private void deactivateAll(UUID userId) {
         UserAiConfig deactivate = new UserAiConfig();
         deactivate.setIsActive(false);
         aiConfigMapper.update(deactivate,
                 new LambdaQueryWrapper<UserAiConfig>()
                         .eq(UserAiConfig::getUserId, userId)
                         .eq(UserAiConfig::getIsActive, true));
+    }
+
+    /**
+     * 将指定配置设为激活，其他配置取消激活
+     */
+    private void activateConfig(UUID userId, UUID configId) {
+        // 先取消该用户所有激活
+//        UserAiConfig deactivate = new UserAiConfig();
+//        deactivate.setIsActive(false);
+//        aiConfigMapper.update(deactivate,
+//                new LambdaQueryWrapper<UserAiConfig>()
+//                        .eq(UserAiConfig::getUserId, userId)
+//                        .eq(UserAiConfig::getIsActive, true));
 
         // 再激活目标
         UserAiConfig activate = new UserAiConfig();
@@ -266,18 +282,19 @@ public class AiConfigService {
             testConfig.setMaxTokens(10); // 只需要极少 token
 
             return adapter.streamCompletion("You are a test assistant.", "Reply with: OK", testConfig)
-                    .filter(chunk -> !chunk.isEmpty()) // 跳过空 chunk（首个 delta 通常无 content）
-                    .take(1) // 收到第一个有内容的 chunk 即可
-                    .timeout(Duration.ofSeconds(30))
-                    .collectList()
+//                    .filter(chunk -> !chunk.isEmpty()) // 跳过空 chunk（首个 delta 通常无 content）
+//                    .take(1) // 收到第一个有内容的 chunk 即可
+//                    .timeout(Duration.ofSeconds(30))
+                    .last()
+//                    .collectList()
                     .map(chunks -> {
                         if (chunks.isEmpty()) {
                             return new AiConfigResponse.TestResult(false, "连接成功但未收到响应，请检查模型配置");
                         }
-                        String reply = String.join("", chunks);
-                        log.info("AI 连接测试成功，模型回复: {}", reply.substring(0, Math.min(reply.length(), 50)));
+//                        String reply = String.join("", chunks);
+                        log.info("AI 连接测试成功，模型消耗token: {}", chunks);
                         return new AiConfigResponse.TestResult(true,
-                                "连接成功！模型 " + config.getModel() + " 响应正常");
+                                "连接成功！模型 " + config.getModel() + " 响应正常, 消耗：" + chunks + "tokens");
                     })
                     .onErrorResume(e -> {
                         String msg = e.getMessage();
@@ -313,7 +330,7 @@ public class AiConfigService {
         resp.setBaseUrl(config.getBaseUrl());
         resp.setModel(config.getModel());
         resp.setMaxTokens(config.getMaxTokens());
-        resp.setActive(Boolean.TRUE.equals(config.getIsActive()));
+        resp.setIsActive(Boolean.TRUE.equals(config.getIsActive()));
 
         try {
             String plainKey = aes.decrypt(config.getApiKey());

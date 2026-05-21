@@ -1,5 +1,6 @@
 package com.devknowledge.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 
@@ -33,7 +34,7 @@ public class AiConfigResponse {
     private Integer maxTokens;
 
     /** 是否为当前激活配置 */
-    private boolean isActive;
+    private Boolean isActive;
 
     /**
      * 连通性测试结果

@@ -42,13 +42,22 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
         body.put("stream", true);
 
         return postStream(client, body)
-                .mapNotNull(chunk -> {
-                    JsonNode delta = extractDelta(chunk);
-                    if (delta != null && delta.has("content") && !delta.get("content").isNull()) {
-                        return delta.get("content").asText();
-                    }
-                    return null;
-                });
+                .doOnNext(chunk -> log.info("AI 测试响应: {}", chunk))
+                .last()
+                .mapNotNull(jsonNode -> {
+                    if (jsonNode == null) return null;
+                    return jsonNode.has("usage")
+                            ? jsonNode.get("usage").get("total_tokens").asText()
+                            : null;
+                }).flux();
+//                .doOnNext(chunk -> log.info("AI 测试响应: {}", chunk))
+//                .mapNotNull(chunk -> {
+//                    JsonNode delta = extractDelta(chunk);
+//                    if (delta != null && delta.has("content") && !delta.get("content").isNull()) {
+//                        return delta.get("content").asText();
+//                    }
+//                    return null;
+//                });
     }
 
     @Override
