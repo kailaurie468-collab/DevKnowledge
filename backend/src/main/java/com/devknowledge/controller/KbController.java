@@ -64,7 +64,9 @@ public class KbController {
     public Mono<ResponseEntity<KbDocument>> uploadDocument(
             @RequestHeader("Authorization") String authHeader,
             @PathVariable UUID id,
-            @RequestPart("file") Mono<FilePart> file) {
+            @RequestPart("file") Mono<FilePart> file,
+            @RequestParam(required = false) Integer minChunkSize,
+            @RequestParam(required = false) Integer maxChunkSize) {
         UUID userId = extractUserId(authHeader);
         if (userId == null) return Mono.just(ResponseEntity.status(401).build());
         return file.flatMap(fp -> DataBufferUtils.join(fp.content())
@@ -75,7 +77,7 @@ public class KbController {
                             return bytes;
                         })
                         .flatMap(bytes ->
-                                kbService.uploadDocument(id, fp.filename(), bytes.length, bytes)))
+                                kbService.uploadDocument(id, fp.filename(), bytes.length, bytes, minChunkSize, maxChunkSize)))
                 .map(ResponseEntity::ok);
     }
 
@@ -83,7 +85,9 @@ public class KbController {
     public Mono<ResponseEntity<List<KbDocument>>> batchUpload(
             @RequestHeader("Authorization") String authHeader,
             @PathVariable UUID id,
-            @RequestPart("files") Flux<FilePart> files) {
+            @RequestPart("files") Flux<FilePart> files,
+            @RequestParam(required = false) Integer minChunkSize,
+            @RequestParam(required = false) Integer maxChunkSize) {
         UUID userId = extractUserId(authHeader);
         if (userId == null) return Mono.just(ResponseEntity.status(401).build());
 
@@ -95,7 +99,7 @@ public class KbController {
                             DataBufferUtils.release(dataBuffer);
                             return bytes;
                         })
-                        .flatMap(bytes -> kbService.uploadDocument(id, fp.filename(), bytes.length, bytes))
+                        .flatMap(bytes -> kbService.uploadDocument(id, fp.filename(), bytes.length, bytes, minChunkSize, maxChunkSize))
         ).collectList().map(ResponseEntity::ok);
     }
 
