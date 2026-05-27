@@ -111,7 +111,6 @@ public class ReActAgent {
                 })
                 .doOnComplete(() -> {
                     log.info("ReAct 第 {} 轮完成，hasToolCall={}，textLength={}", currentRound + 1, hasToolCall.get(), textOutputLength.get());
-                    //Todo: 满足结束推理的条件 除了工具调用，还需要判断模型是否还有未完成的任务或者有其他操作
 
                     // 完成信号检测：后半程 + 无工具调用 + 足够文本 + 包含完成关键词
                     if (!hasToolCall.get()
