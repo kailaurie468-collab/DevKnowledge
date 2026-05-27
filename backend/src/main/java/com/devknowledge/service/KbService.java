@@ -320,12 +320,12 @@ public class KbService {
                 int spaceIdx = trimmed.indexOf(' ');
                 currentHeadingPrefix = spaceIdx > 0 ? trimmed.substring(0, spaceIdx + 1) : trimmed + " ";
             }
-            if (buffer.length() > 0) buffer.append("\n");
+            if (!buffer.isEmpty()) buffer.append("\n");
             buffer.append(line);
         }
 
         // 刷出最后一个缓冲区
-        if (buffer.length() > 0) {
+        if (!buffer.isEmpty()) {
             flushBuffer(blocks, currentType, buffer, currentHeadingPrefix);
         }
         return blocks;
