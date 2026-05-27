@@ -5,6 +5,7 @@ import com.huaban.analysis.jieba.JiebaSegmenter;
 import com.huaban.analysis.jieba.SegToken;
 import com.devknowledge.dto.AiConfigResponse;
 import com.devknowledge.dto.GenerateDemoRequest;
+import com.devknowledge.dto.KbChunkSearchResult;
 import com.devknowledge.mapper.DemoMapper;
 import com.devknowledge.mapper.FrameworkMapper;
 import com.devknowledge.mapper.UserAiConfigMapper;
@@ -43,6 +44,7 @@ public class DemoService {
     private final DemoMapper demoMapper;
     private final FrameworkMapper frameworkMapper;
     private final DemoToolProvider toolProvider;
+    private final KbService kbService;
 
     @Value("${jwt.secret}")
     private String aesSecret;
@@ -91,10 +93,22 @@ public class DemoService {
             List<AiFunction> tools = new ArrayList<>(toolProvider.getBaseTools());
             Map<String, ToolHandler> handlers = new HashMap<>(toolProvider.getBaseHandlers());
 
-            // 知识库介入：动态注入 search_kb 工具
+            // RAG 预检索注入
+            //TODO: RAG检测指标待构建
             if (req.getKbId() != null) {
+                int topK = req.getTopK() != null ? req.getTopK() : 3;
+                try {
+                    List<KbChunkSearchResult> contextChunks =
+                            kbService.searchKbVector(userId, req.getKbId(), req.getPrompt(), topK).block();
+                    if (contextChunks != null && !contextChunks.isEmpty()) {
+                        systemPrompt += buildRagContext(contextChunks);
+                    }
+                } catch (Exception e) {
+                    log.warn("RAG 预检索失败，继续无 RAG 生成: {}", e.getMessage());
+                }
+
                 tools.add(toolProvider.getKbTool());
-                handlers.put("search_kb", toolProvider.getKbHandler(req.getKbId()));
+                handlers.put("search_kb", toolProvider.getKbHandler(userId, req.getKbId()));
             }
 
             // 3. 运行 ReAct Agent，收集输出并保存
@@ -339,6 +353,11 @@ public class DemoService {
         prompt.append("- 拿到足够信息后立即给出完整回答，不要重复调用相同工具\n");
         prompt.append("- 如果工具返回空结果，直接基于已有知识回答\n");
 
+        prompt.append("\n推理控制规则：\n");
+        prompt.append("- 当你已收集到足够信息来回答用户问题时，直接输出完整回答，不要再调用工具\n");
+        prompt.append("- 如果连续两次工具调用都没有获取到有用信息，请基于已有知识直接回答\n");
+        prompt.append("- 不要重复调用相同的工具或搜索相同的关键词\n");
+
         return prompt.toString();
     }
 
@@ -352,6 +371,21 @@ public class DemoService {
     private int estimateTokens(String text) {
         if (text == null || text.isEmpty()) return 0;
         return (int) (text.length() * 1.5);
+    }
+
+    private String buildRagContext(List<KbChunkSearchResult> chunks) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n\n以下是知识库中的相关参考内容（已自动检索）：\n");
+        sb.append("请优先参考这些内容回答问题，如果信息不足可以调用 search_kb 工具进一步搜索。\n\n");
+        for (int i = 0; i < chunks.size(); i++) {
+            KbChunkSearchResult chunk = chunks.get(i);
+            sb.append(String.format("[%d] 来源: %s (相关度: %.0f%%)\n",
+                    i + 1,
+                    chunk.getFilename() != null ? chunk.getFilename() : "未知",
+                    chunk.getScore() * 100));
+            sb.append(chunk.getContent()).append("\n\n");
+        }
+        return sb.toString();
     }
 
     /**

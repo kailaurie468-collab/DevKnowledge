@@ -10,6 +10,7 @@ import reactor.core.publisher.Sinks;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 
 /**
  * ReAct (Reasoning + Acting) Agent 引擎
@@ -21,6 +22,11 @@ public class ReActAgent {
     private static final Logger log = LoggerFactory.getLogger(ReActAgent.class);
     private static final int DEFAULT_MAX_ITERATIONS = 5;
     private static final int ABSOLUTE_MAX_ITERATIONS = 8;
+    /** 完成信号关键词正则 */
+    private static final Pattern COMPLETION_PATTERN = Pattern.compile(
+            "以下是最终答案|最终回答|总结如下|以下是完整的|以上就是|综上所述|代码如下");
+    /** 完成信号最小文本长度 */
+    private static final int MIN_COMPLETION_TEXT_LENGTH = 100;
 
     private final AiProviderFactory aiProviderFactory;
 
@@ -80,6 +86,7 @@ public class ReActAgent {
         log.info("ReAct 第 {} 轮开始，消息数: {}", currentRound + 1, messages.size());
 
         AtomicBoolean hasToolCall = new AtomicBoolean(false);
+        AtomicInteger textOutputLength = new AtomicInteger(0);
         List<AiChunk> toolCallChunks = Collections.synchronizedList(new ArrayList<>());
 
         adapter.streamWithTools(systemPrompt, messages, tools, config)
@@ -89,6 +96,10 @@ public class ReActAgent {
                         toolCallChunks.add(chunk);
                         sink.tryEmitNext(AiChunk.toolCall(chunk.getFunctionName(), chunk.getArguments()));
                     } else if (chunk.getType() == AiChunkType.TEXT) {
+                        // 追踪文本输出总长度
+                        if (chunk.getContent() != null) {
+                            textOutputLength.addAndGet(chunk.getContent().length());
+                        }
                         sink.tryEmitNext(chunk);
                     }
                 })
@@ -99,7 +110,25 @@ public class ReActAgent {
                     sink.tryEmitComplete();
                 })
                 .doOnComplete(() -> {
-                    log.info("ReAct 第 {} 轮完成，hasToolCall={}", currentRound + 1, hasToolCall.get());
+                    log.info("ReAct 第 {} 轮完成，hasToolCall={}，textLength={}", currentRound + 1, hasToolCall.get(), textOutputLength.get());
+                    //Todo: 满足结束推理的条件 除了工具调用，还需要判断模型是否还有未完成的任务或者有其他操作
+
+                    // 完成信号检测：后半程 + 无工具调用 + 足够文本 + 包含完成关键词
+                    if (!hasToolCall.get()
+                            && currentRound + 1 >= maxIterations / 2
+                            && textOutputLength.get() >= MIN_COMPLETION_TEXT_LENGTH) {
+                        // 检查本轮文本是否包含完成信号
+                        String roundText = messages.stream()
+                                .filter(m -> "assistant".equals(m.role()))
+                                .map(AiProviderAdapter.ChatMessage::content)
+                                .reduce("", (a, b) -> a + " " + b);
+                        if (COMPLETION_PATTERN.matcher(roundText).find()) {
+                            log.info("检测到完成信号关键词，结束推理");
+                            sink.tryEmitNext(AiChunk.done());
+                            sink.tryEmitComplete();
+                            return;
+                        }
+                    }
 
                     // 模型没有调用工具 → 正常结束
                     if (!hasToolCall.get()) {
