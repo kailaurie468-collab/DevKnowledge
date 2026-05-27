@@ -51,6 +51,19 @@ public class ReActAgent {
     public Flux<AiChunk> run(String systemPrompt, String userMessage,
                               List<AiFunction> tools, Map<String, ToolHandler> handlers,
                               UserAiConfig config, int maxIterations) {
+        return run(systemPrompt, userMessage, tools, handlers, config, maxIterations, null);
+    }
+
+    /**
+     * 运行 ReAct 循环（支持工具调用次数追踪）
+     *
+     * @param maxIterations  最大推理轮数（1-8，超出范围自动修正）
+     * @param toolCallCounts 工具调用次数统计 map，传 null 则不追踪
+     */
+    public Flux<AiChunk> run(String systemPrompt, String userMessage,
+                              List<AiFunction> tools, Map<String, ToolHandler> handlers,
+                              UserAiConfig config, int maxIterations,
+                              Map<String, AtomicInteger> toolCallCounts) {
 
         int effectiveMax = Math.max(1, Math.min(maxIterations, ABSOLUTE_MAX_ITERATIONS));
         log.info("ReAct Agent 启动，maxIterations={}", effectiveMax);
@@ -66,7 +79,7 @@ public class ReActAgent {
         // 连续全失败轮次计数（连续 2 轮全部工具失败才硬停止）
         AtomicInteger consecutiveAllFail = new AtomicInteger(0);
 
-        runRound(adapter, systemPrompt, messages, tools, handlers, config, sink, iteration, effectiveMax, lastRoundSignatures, consecutiveAllFail);
+        runRound(adapter, systemPrompt, messages, tools, handlers, config, sink, iteration, effectiveMax, lastRoundSignatures, consecutiveAllFail, toolCallCounts);
 
         return sink.asFlux();
     }
@@ -80,7 +93,8 @@ public class ReActAgent {
                            UserAiConfig config, Sinks.Many<AiChunk> sink,
                            AtomicInteger iteration, int maxIterations,
                            List<String> lastRoundSignatures,
-                           AtomicInteger consecutiveAllFail) {
+                           AtomicInteger consecutiveAllFail,
+                           Map<String, AtomicInteger> toolCallCounts) {
 
         int currentRound = iteration.getAndIncrement();
         log.info("ReAct 第 {} 轮开始，消息数: {}", currentRound + 1, messages.size());
@@ -168,7 +182,7 @@ public class ReActAgent {
                     boolean allFailed = true;
 
                     for (AiChunk tc : toolCallChunks) {
-                        ToolResult result = executeTool(tc, handlers, messages, sink);
+                        ToolResult result = executeTool(tc, handlers, messages, sink, toolCallCounts);
                         if (!result.isEmpty() && !result.isError()) {
                             allFailed = false;
                         }
@@ -197,7 +211,7 @@ public class ReActAgent {
 
                     // 继续下一轮
                     runRound(adapter, systemPrompt, messages, tools, handlers, config, sink,
-                            iteration, maxIterations, lastRoundSignatures, consecutiveAllFail);
+                            iteration, maxIterations, lastRoundSignatures, consecutiveAllFail, toolCallCounts);
                 })
                 .subscribe();
     }
@@ -212,7 +226,8 @@ public class ReActAgent {
      */
     private ToolResult executeTool(AiChunk toolCall, Map<String, ToolHandler> handlers,
                                     List<AiProviderAdapter.ChatMessage> messages,
-                                    Sinks.Many<AiChunk> sink) {
+                                    Sinks.Many<AiChunk> sink,
+                                    Map<String, AtomicInteger> toolCallCounts) {
         String fnName = toolCall.getFunctionName();
         String fnArgs = toolCall.getArguments();
         log.info("执行工具: {}({})", fnName, fnArgs);
@@ -228,6 +243,11 @@ public class ReActAgent {
         try {
             String result = handler.apply(fnArgs);
             log.info("工具 {} 执行完成，结果长度: {}", fnName, result != null ? result.length() : 0);
+
+            // 记录工具调用次数
+            if (toolCallCounts != null) {
+                toolCallCounts.computeIfAbsent(fnName, k -> new AtomicInteger(0)).incrementAndGet();
+            }
             sink.tryEmitNext(AiChunk.text("\n[工具 " + fnName + " 执行完成]\n"));
 
             boolean isEmpty = result == null || result.isBlank();
