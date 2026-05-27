@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor;
 import com.devknowledge.model.StringArrayTypeHandler;
 import com.devknowledge.model.UuidTypeHandler;
+import com.devknowledge.model.VectorTypeHandler;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -30,6 +31,9 @@ public class MyBatisPlusConfig {
 
         // PostgreSQL text[] 数组类型处理器
         registry.register(String[].class, StringArrayTypeHandler.class);
+
+        // pgvector vector 类型处理器
+        registry.register(VectorTypeHandler.class);
 
         return registry;
     }
