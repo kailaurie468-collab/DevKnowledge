@@ -305,6 +305,7 @@ public class KbService {
 
         for (String line : lines) {
             String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
             BlockType lineType = detectLineType(trimmed, currentType);
 
             if (currentType != null && lineType != currentType) {
