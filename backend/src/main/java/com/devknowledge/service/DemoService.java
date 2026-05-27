@@ -8,9 +8,11 @@ import com.devknowledge.dto.GenerateDemoRequest;
 import com.devknowledge.dto.KbChunkSearchResult;
 import com.devknowledge.mapper.DemoMapper;
 import com.devknowledge.mapper.FrameworkMapper;
+import com.devknowledge.mapper.RagMetricMapper;
 import com.devknowledge.mapper.UserAiConfigMapper;
 import com.devknowledge.model.Demo;
 import com.devknowledge.model.Framework;
+import com.devknowledge.model.RagMetric;
 import com.devknowledge.model.UserAiConfig;
 import com.devknowledge.security.AesUtil;
 import com.devknowledge.service.ai.*;
@@ -27,6 +29,7 @@ import reactor.core.scheduler.Schedulers;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Demo 生成服务
@@ -45,6 +48,7 @@ public class DemoService {
     private final FrameworkMapper frameworkMapper;
     private final DemoToolProvider toolProvider;
     private final KbService kbService;
+    private final RagMetricMapper ragMetricMapper;
 
     @Value("${jwt.secret}")
     private String aesSecret;
@@ -93,18 +97,47 @@ public class DemoService {
             List<AiFunction> tools = new ArrayList<>(toolProvider.getBaseTools());
             Map<String, ToolHandler> handlers = new HashMap<>(toolProvider.getBaseHandlers());
 
-            // RAG 预检索注入
-            //TODO: RAG检测指标待构建
+            // RAG 预检索注入 + 指标采集
+            RagMetric ragMetric = null;
+            Map<String, AtomicInteger> toolCallCounts = new HashMap<>();
+
             if (req.getKbId() != null) {
                 int topK = req.getTopK() != null ? req.getTopK() : 3;
+                ragMetric = new RagMetric();
+                ragMetric.setId(UUID.randomUUID());
+                ragMetric.setUserId(userId);
+                ragMetric.setKbId(req.getKbId());
+                ragMetric.setTopK(topK);
+                ragMetric.setToolCallCount(0);
+                ragMetric.setCreatedAt(Instant.now());
+
                 try {
+                    long startTime = System.currentTimeMillis();
                     List<KbChunkSearchResult> contextChunks =
                             kbService.searchKbVector(userId, req.getKbId(), req.getPrompt(), topK).block();
+                    long retrievalMs = System.currentTimeMillis() - startTime;
+
                     if (contextChunks != null && !contextChunks.isEmpty()) {
                         systemPrompt += buildRagContext(contextChunks);
+
+                        // 计算相似度指标
+                        double avgSim = contextChunks.stream().mapToDouble(KbChunkSearchResult::getScore).average().orElse(0);
+                        double maxSim = contextChunks.stream().mapToDouble(KbChunkSearchResult::getScore).max().orElse(0);
+                        double minSim = contextChunks.stream().mapToDouble(KbChunkSearchResult::getScore).min().orElse(0);
+
+                        ragMetric.setRagUsed(true);
+                        ragMetric.setChunkCount(contextChunks.size());
+                        ragMetric.setAvgSimilarity(avgSim);
+                        ragMetric.setMaxSimilarity(maxSim);
+                        ragMetric.setMinSimilarity(minSim);
+                        ragMetric.setRetrievalMs((int) retrievalMs);
+                    } else {
+                        ragMetric.setRagUsed(false);
+                        ragMetric.setRetrievalMs((int) retrievalMs);
                     }
                 } catch (Exception e) {
                     log.warn("RAG 预检索失败，继续无 RAG 生成: {}", e.getMessage());
+                    ragMetric.setRagUsed(false);
                 }
 
                 tools.add(toolProvider.getKbTool());
@@ -115,7 +148,8 @@ public class DemoService {
             StringBuilder outputCollector = new StringBuilder();
 
             int maxIter = req.getMaxIterations() != null ? req.getMaxIterations() : 5;
-            return reactAgent.run(systemPrompt, req.getPrompt(), tools, handlers, config, maxIter)
+            final RagMetric finalRagMetric = ragMetric;
+            return reactAgent.run(systemPrompt, req.getPrompt(), tools, handlers, config, maxIter, toolCallCounts)
                     .map(chunk -> {
                         // 收集文本输出
                         if (chunk.getType() == AiChunkType.TEXT && chunk.getContent() != null) {
@@ -145,6 +179,19 @@ public class DemoService {
                         String fullOutput = outputCollector.toString();
                         if (!fullOutput.isEmpty() && userId != null) {
                             saveDemoSync(userId, req, fullOutput);
+                        }
+
+                        // 保存 RAG 指标
+                        if (finalRagMetric != null && userId != null) {
+                            try {
+                                AtomicInteger kbCount = toolCallCounts.get("search_kb");
+                                finalRagMetric.setToolCallCount(kbCount != null ? kbCount.get() : 0);
+                                ragMetricMapper.insert(finalRagMetric);
+                                log.info("RAG 指标已保存: avgSim={}, retrievalMs={}",
+                                        finalRagMetric.getAvgSimilarity(), finalRagMetric.getRetrievalMs());
+                            } catch (Exception e) {
+                                log.warn("保存 RAG 指标失败: {}", e.getMessage());
+                            }
                         }
                     });
         }).onErrorResume(e -> Flux.just(errorEvent(e.getMessage())));
