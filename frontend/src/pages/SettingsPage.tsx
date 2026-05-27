@@ -3,14 +3,12 @@ import { useAuthStore } from '@/stores/authStore'
 import { AiSettings } from './settings/AiSettings'
 import { EmbeddingSettings } from './settings/EmbeddingSettings'
 import { StorageSettings } from './settings/StorageSettings'
-import { RagMetrics } from './settings/RagMetrics'
 
-type SettingsTab = 'ai' | 'embedding' | 'rag' | 'storage'
+type SettingsTab = 'ai' | 'embedding' | 'storage'
 
 const tabs: { key: SettingsTab; label: string; desc: string }[] = [
   { key: 'ai', label: 'AI 服务配置', desc: 'Chat 模型配置' },
   { key: 'embedding', label: 'Embedding AI', desc: '文本向量化模型' },
-  { key: 'rag', label: 'RAG 指标', desc: '检索质量监控' },
   { key: 'storage', label: '数据存储', desc: '本地存储设置' },
 ]
 
@@ -56,7 +54,6 @@ export function SettingsPage() {
         <div className="flex-1 min-w-0">
           {activeTab === 'ai' && <AiSettings />}
           {activeTab === 'embedding' && <EmbeddingSettings />}
-          {activeTab === 'rag' && <RagMetrics />}
           {activeTab === 'storage' && <StorageSettings />}
         </div>
       </div>

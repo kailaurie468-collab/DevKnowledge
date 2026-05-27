@@ -6,6 +6,7 @@ const links = [
   { to: '/demos', label: 'Demo 生成', icon: ' ' },
   { to: '/skills', label: 'Skills 构建', icon: ' ' },
   { to: '/kb', label: '知识库', icon: ' ' },
+  { to: '/rag-metrics', label: 'RAG 指标', icon: ' ' },
   { to: '/settings', label: '设置', icon: ' ' },
 ]
 

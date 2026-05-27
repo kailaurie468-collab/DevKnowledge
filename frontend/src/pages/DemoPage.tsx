@@ -1,6 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import { demosApi } from '@/api/demos'
 import { kbApi } from '@/api/kb'
+import { settingsApi } from '@/api/settings'
 import { useSSE } from '@/hooks/useSSE'
 import { useAuthStore } from '@/stores/authStore'
 import { useNotify } from '@/stores/notify'
@@ -118,6 +119,7 @@ export function DemoPage() {
   const [kbs, setKbs] = useState<KnowledgeBase[]>([])
   const [selectedKbId, setSelectedKbId] = useState('')
   const [topK, setTopK] = useState(3)
+  const [ragChunkCounts, setRagChunkCounts] = useState<Record<string, number>>({})
   const { isStreaming, output, events, stream, reset } = useSSE()
 
   const fetchDemos = (page = 1, keyword = demoKeyword) => {
@@ -127,6 +129,12 @@ export function DemoPage() {
         setDemoTotalPages(res.pages)
         setDemoTotal(res.total)
         setDemoPage(page)
+        // 获取 RAG 指标，构建 demoId → chunkCount 映射
+        settingsApi.getRagMetrics().then(metrics => {
+          const map: Record<string, number> = {}
+          metrics.forEach(m => { if (m.ragUsed) map[m.demoId] = m.chunkCount })
+          setRagChunkCounts(map)
+        }).catch(() => {})
       })
       .catch(console.error)
   }
@@ -318,7 +326,12 @@ export function DemoPage() {
                       className="flex-1 text-left p-3 border border-gray-200 rounded-lg hover:border-primary-300 transition-all"
                     >
                       <h3 className="font-medium text-sm text-gray-900">{demo.title}</h3>
-                      <p className="text-xs text-gray-500 truncate">{demo.prompt}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <p className="text-xs text-gray-500 truncate flex-1">{demo.prompt}</p>
+                        <span className="text-xs text-gray-400 whitespace-nowrap">
+                          RAG: {ragChunkCounts[demo.id] ?? 0} 篇
+                        </span>
+                      </div>
                     </button>
                     <button
                       onClick={async () => {

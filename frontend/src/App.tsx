@@ -11,6 +11,7 @@ import { SkillsPage } from '@/pages/SkillsPage'
 import { KbPage } from '@/pages/KbPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { RagMetricsPage } from '@/pages/RagMetricsPage'
 
 export default function App() {
   const [particleVisible, setParticleVisible] = useState(true)
@@ -55,6 +56,7 @@ export default function App() {
             <Route path="/demos" element={<DemoPage />} />
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="/kb" element={<KbPage />} />
+            <Route path="/rag-metrics" element={<RagMetricsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Routes>
