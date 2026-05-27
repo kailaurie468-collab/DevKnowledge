@@ -1,5 +1,6 @@
 package com.devknowledge.service.ai;
 
+import com.devknowledge.dto.KbChunkSearchResult;
 import com.devknowledge.model.KnowledgeBase;
 import com.devknowledge.service.KbService;
 import com.devknowledge.service.KnowledgeService;
@@ -105,8 +106,8 @@ public class DemoToolProvider {
     /**
      * 构建知识库工具处理器
      */
-    public ToolHandler getKbHandler(UUID kbId) {
-        return buildSearchKbHandler(kbId);
+    public ToolHandler getKbHandler(UUID userId, UUID kbId) {
+        return buildSearchKbHandler(userId, kbId);
     }
 
     // ==================== Handler 实现 ====================
@@ -158,30 +159,20 @@ public class DemoToolProvider {
             }
         };
     }
-
-    private ToolHandler buildSearchKbHandler(UUID kbId) {
+    private ToolHandler buildSearchKbHandler(UUID userId, UUID kbId) {
         return args -> {
             try {
                 String query = extractJsonString(args, "query");
                 log.info("工具 search_kb 执行，kbId={}, query={}", kbId, query);
-                var results = kbService.searchKb(kbId, query).block();
+
+                var results = kbService.searchKbVector(userId, kbId, query, 5).block();
                 if (results == null || results.isEmpty()) return "知识库中未找到相关内容";
 
                 StringBuilder sb = new StringBuilder();
-                for (var doc : results) {
-                    sb.append("【").append(doc.getFilename()).append("】\n");
-                    String content = doc.getContent();
-                    if (content != null) {
-                        int idx = content.toLowerCase().indexOf(query.toLowerCase());
-                        if (idx >= 0) {
-                            int start = Math.max(0, idx - 100);
-                            int end = Math.min(content.length(), idx + query.length() + 400);
-                            sb.append("...").append(content, start, end).append("...\n");
-                        } else {
-                            sb.append(content, 0, Math.min(content.length(), 500)).append("\n");
-                        }
-                    }
-                    sb.append("\n");
+                for (var chunk : results) {
+                    sb.append("【").append(chunk.getFilename() != null ? chunk.getFilename() : "文档").append("】");
+                    sb.append(" 相关度: ").append(String.format("%.0f%%", chunk.getScore() * 100)).append("\n");
+                    sb.append(chunk.getContent()).append("\n\n");
                 }
                 return sb.toString();
             } catch (Exception e) {

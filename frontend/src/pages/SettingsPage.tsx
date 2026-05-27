@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { useAuthStore } from '@/stores/authStore'
 import { AiSettings } from './settings/AiSettings'
+import { EmbeddingSettings } from './settings/EmbeddingSettings'
 import { StorageSettings } from './settings/StorageSettings'
 
-type SettingsTab = 'ai' | 'storage'
+type SettingsTab = 'ai' | 'embedding' | 'storage'
 
-const tabs: { key: SettingsTab; label: string }[] = [
-  { key: 'ai', label: 'AI 配置' },
-  { key: 'storage', label: '数据存储' },
+const tabs: { key: SettingsTab; label: string; desc: string }[] = [
+  { key: 'ai', label: 'AI 服务配置', desc: 'Chat 模型配置' },
+  { key: 'embedding', label: 'Embedding AI', desc: '文本向量化模型' },
+  { key: 'storage', label: '数据存储', desc: '本地存储设置' },
 ]
 
 export function SettingsPage() {
@@ -18,7 +20,7 @@ export function SettingsPage() {
     return (
       <div>
         <h1 className="text-2xl font-bold text-gray-900 mb-4">设置</h1>
-        <p className="text-gray-500">请先登录以配置 AI 服务商。</p>
+        <p className="text-gray-500">请先登录以配置服务。</p>
       </div>
     )
   }
@@ -27,26 +29,34 @@ export function SettingsPage() {
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-6">设置</h1>
 
-      {/* 顶部导航栏 */}
-      <div className="flex gap-1 border-b border-gray-200 mb-6">
-        {tabs.map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${
-              activeTab === tab.key
-                ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <div className="flex gap-6">
+        {/* 侧边栏 */}
+        <nav className="w-48 flex-shrink-0">
+          <div className="space-y-1">
+            {tabs.map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                  activeTab === tab.key
+                    ? 'bg-primary-50 text-primary-700 font-medium'
+                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                }`}
+              >
+                <div>{tab.label}</div>
+                <div className="text-xs text-gray-400 mt-0.5">{tab.desc}</div>
+              </button>
+            ))}
+          </div>
+        </nav>
 
-      {/* 子页面 */}
-      {activeTab === 'ai' && <AiSettings />}
-      {activeTab === 'storage' && <StorageSettings />}
+        {/* 内容区 */}
+        <div className="flex-1 min-w-0">
+          {activeTab === 'ai' && <AiSettings />}
+          {activeTab === 'embedding' && <EmbeddingSettings />}
+          {activeTab === 'storage' && <StorageSettings />}
+        </div>
+      </div>
     </div>
   )
 }

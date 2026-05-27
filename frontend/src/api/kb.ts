@@ -2,7 +2,7 @@ import { api } from './client'
 import type { KnowledgeBase, KbDocument } from '@/types/api'
 
 export const kbApi = {
-  createKb: (data: { name: string; description?: string }) =>
+  createKb: (data: { name: string; description?: string; embeddingModel?: string; embeddingDimensions?: number }) =>
     api.post<KnowledgeBase>('/kb', data),
 
   getKbs: () =>

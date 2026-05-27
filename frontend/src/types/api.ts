@@ -72,6 +72,7 @@ export interface GenerateDemoRequest {
   language?: string
   maxIterations?: number
   kbId?: string
+  topK?: number
 }
 
 export interface Demo {
@@ -140,6 +141,8 @@ export interface KnowledgeBase {
   name: string
   description?: string
   documentCount?: number
+  embeddingModel?: string
+  embeddingDimensions?: number
   createdAt: string
   updatedAt: string
 }
@@ -151,8 +154,9 @@ export interface KbDocument {
   fileType: string
   fileSize: number
   content?: string
-  status: 'processing' | 'ready' | 'error'
+  status: 'processing' | 'ready' | 'error' | 'embedding'
   errorMessage?: string
+  chunkCount?: number
   createdAt: string
 }
 
@@ -210,4 +214,20 @@ export interface SSEEvent {
   type: SSEEventType
   content: string
   functionName?: string  // tool_call 时的函数名
+}
+
+// Embedding Config
+export interface EmbeddingConfig {
+  id?: string
+  name?: string
+  apiKeyMasked: string
+  baseUrl: string
+  isActive?: boolean
+}
+
+export interface EmbeddingConfigRequest {
+  configId?: string
+  name?: string
+  apiKey: string
+  baseUrl: string
 }

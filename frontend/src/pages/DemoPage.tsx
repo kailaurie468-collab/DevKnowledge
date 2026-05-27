@@ -117,6 +117,7 @@ export function DemoPage() {
   const [demoKeyword, setDemoKeyword] = useState('')
   const [kbs, setKbs] = useState<KnowledgeBase[]>([])
   const [selectedKbId, setSelectedKbId] = useState('')
+  const [topK, setTopK] = useState(3)
   const { isStreaming, output, events, stream, reset } = useSSE()
 
   const fetchDemos = (page = 1, keyword = demoKeyword) => {
@@ -149,6 +150,7 @@ export function DemoPage() {
           language,
           frameworkId: frameworkId || undefined,
           kbId: selectedKbId || undefined,
+          topK: selectedKbId ? topK : undefined,
         })(signal),
       {
         onChunk: (chunk) => {
@@ -211,6 +213,21 @@ export function DemoPage() {
               <option key={kb.id} value={kb.id}>{kb.name}</option>
             ))}
           </select>
+            {/* Top-K 滑块 */}
+            {selectedKbId && (
+              <div className="flex items-center gap-3">
+                <label className="text-sm text-gray-600">检索数量:</label>
+                <input
+                  type="range"
+                  min={1}
+                  max={10}
+                  value={topK}
+                  onChange={e => setTopK(Number(e.target.value))}
+                  className="w-32"
+                />
+                <span className="text-sm font-medium text-gray-900 w-6">{topK}</span>
+              </div>
+            )}
           <button
             onClick={handleGenerate}
             disabled={isStreaming || !prompt.trim()}

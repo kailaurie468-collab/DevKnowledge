@@ -25,4 +25,8 @@ public class KnowledgeBase {
 
     private Instant createdAt;
     private Instant updatedAt;
+    /** Embedding 模型名（创建时锁定） */
+    private String embeddingModel;
+    /** Embedding 维度（创建时锁定，可为 null） */
+    private Integer embeddingDimensions;
 }

@@ -299,6 +299,7 @@ public class KbService {
         List<MarkdownBlock> blocks = new ArrayList<>();
         String[] lines = content.split("\n", -1);
         BlockType currentType = null;
+        // 结果缓冲区
         StringBuilder buffer = new StringBuilder();
         String currentHeadingPrefix = null;
 

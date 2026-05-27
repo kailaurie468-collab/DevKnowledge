@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { kbApi } from '@/api/kb'
 import { useAuthStore } from '@/stores/authStore'
+import { useNotify } from '@/stores/notify'
 import { SearchBar } from '@/components/knowledge/SearchBar'
 import type { KnowledgeBase, KbDocument } from '@/types/api'
 
 export function KbPage() {
   const { isAuthenticated } = useAuthStore()
+  const { notify } = useNotify()
   const [kbs, setKbs] = useState<KnowledgeBase[]>([])
   const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null)
   const [documents, setDocuments] = useState<KbDocument[]>([])
@@ -13,6 +15,8 @@ export function KbPage() {
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
   const [showCreate, setShowCreate] = useState(false)
+  const [embeddingModel, setEmbeddingModel] = useState('text-embedding-3-small')
+  const [embeddingDimensions, setEmbeddingDimensions] = useState<number | undefined>(undefined)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadKbs = useCallback(() => {
@@ -29,10 +33,36 @@ export function KbPage() {
     }
   }, [selectedKb])
 
+  // 轮询：当有文档处于 processing/embedding 状态时，每 3 秒刷新一次
+  useEffect(() => {
+    if (!selectedKb) return
+    const hasPending = documents.some(d => d.status === 'processing' || d.status === 'embedding')
+    if (!hasPending) return
+
+    const timer = setInterval(() => {
+      kbApi.getDocuments(selectedKb.id).then(latest => {
+        setDocuments(latest)
+        const stillPending = latest.some(d => d.status === 'processing' || d.status === 'embedding')
+        if (!stillPending) clearInterval(timer)
+      }).catch(() => clearInterval(timer))
+    }, 3000)
+
+    return () => clearInterval(timer)
+  }, [selectedKb, documents])
+
   const handleCreate = async () => {
     if (!newName.trim()) return
     try {
-      await kbApi.createKb({ name: newName, description: newDesc || undefined })
+      if (embeddingModel === 'text-embedding-3-large' && embeddingDimensions !== 1536) {
+        notify('large 模型必须设置 dimensions=1536', 'error')
+        return
+      }
+      await kbApi.createKb({
+        name: newName,
+        description: newDesc || undefined,
+        embeddingModel,
+        embeddingDimensions,
+      })
       setNewName('')
       setNewDesc('')
       setShowCreate(false)
@@ -97,6 +127,43 @@ export function KbPage() {
             placeholder="描述（可选）"
             className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
           />
+            {/* Embedding 模型选择 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Embedding 模型</label>
+              <select
+                value={embeddingModel}
+                onChange={e => {
+                  setEmbeddingModel(e.target.value)
+                  if (e.target.value === 'text-embedding-ada-002') setEmbeddingDimensions(undefined)
+                }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              >
+                <option value="text-embedding-3-small">text-embedding-3-small（推荐，成本最低）</option>
+                <option value="text-embedding-3-large">text-embedding-3-large（效果最好）</option>
+                <option value="text-embedding-ada-002">text-embedding-ada-002（上一代）</option>
+              </select>
+            </div>
+
+            {/* 向量维度 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                向量维度
+                <span className="text-xs text-gray-400 ml-2">（可选，创建后不可更改）</span>
+              </label>
+              <input
+                type="number"
+                value={embeddingDimensions || ''}
+                onChange={e => setEmbeddingDimensions(e.target.value ? Number(e.target.value) : undefined)}
+                placeholder={embeddingModel === 'text-embedding-3-small' ? '推荐 512，留空=1536' :
+                             embeddingModel === 'text-embedding-3-large' ? '必须填 1536' :
+                             'ada-002 不支持 dimensions'}
+                disabled={embeddingModel === 'text-embedding-ada-002'}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm disabled:bg-gray-100 disabled:text-gray-400"
+              />
+              {embeddingModel === 'text-embedding-3-large' && (
+                <p className="text-xs text-amber-600 mt-1">large 模型必须设置 dimensions=1536</p>
+              )}
+            </div>
           <div className="flex gap-2">
             <button onClick={handleCreate} className="px-3 py-1.5 bg-primary-600 text-white rounded-md text-sm">创建</button>
             <button onClick={() => setShowCreate(false)} className="px-3 py-1.5 border border-gray-300 rounded-md text-sm">← 返回</button>
@@ -177,10 +244,14 @@ export function KbPage() {
                       <span className={`text-xs ml-2 px-1.5 py-0.5 rounded ${
                         doc.status === 'ready' ? 'bg-green-100 text-green-700' :
                         doc.status === 'error' ? 'bg-red-100 text-red-700' :
+                        doc.status === 'embedding' ? 'bg-blue-100 text-blue-700' :
                         'bg-yellow-100 text-yellow-700'
                       }`}>
-                        {doc.status === 'ready' ? '就绪' : doc.status === 'error' ? '错误' : '解析中'}
+                        {doc.status === 'ready' ? '就绪' : doc.status === 'error' ? '错误' : doc.status === 'embedding' ? '向量化中' : '解析中'}
                       </span>
+                      {doc.chunkCount != null && doc.chunkCount > 0 && (
+                        <span className="text-xs text-gray-400 ml-2">{doc.chunkCount} chunks</span>
+                      )}
                       <span className="text-xs text-gray-400 ml-2">{doc.fileType}</span>
                     </div>
                     <button
@@ -204,6 +275,12 @@ export function KbPage() {
               <button onClick={() => setSelectedKb(kb)} className="text-left flex-1">
                 <h3 className="font-medium text-sm text-gray-900">{kb.name}</h3>
                 {kb.description && <p className="text-xs text-gray-500">{kb.description}</p>}
+                {kb.embeddingModel && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    模型: {kb.embeddingModel}
+                    {kb.embeddingDimensions ? ` | 维度: ${kb.embeddingDimensions}` : ''}
+                  </p>
+                )}
               </button>
               <button
                 onClick={() => handleDelete(kb.id)}

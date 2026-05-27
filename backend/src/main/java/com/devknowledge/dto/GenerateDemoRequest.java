@@ -24,4 +24,7 @@ public class GenerateDemoRequest {
 
     /** 关联知识库 ID（可选，传入后 ReActAgent 会使用知识库搜索工具） */
     private UUID kbId;
+
+    /** RAG 预检索数量（默认 3） */
+    private Integer topK;
 }

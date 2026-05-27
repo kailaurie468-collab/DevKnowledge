@@ -26,6 +26,8 @@ public class KbDocument {
     private String content;
     private String status;
     private String errorMessage;
+    /** 文档被切分成的文本片段数量（RAG 向量化时按段落切分，每个片段独立 Embedding） */
+    private Integer chunkCount;
 
     private Instant createdAt;
 }

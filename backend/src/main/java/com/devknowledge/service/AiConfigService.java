@@ -282,7 +282,7 @@ public class AiConfigService {
             testConfig.setMaxTokens(10); // 只需要极少 token
 
             return adapter.streamCompletion("You are a test assistant.", "Reply with: OK", testConfig)
-//                    .filter(chunk -> !chunk.isEmpty()) // 跳过空 chunk（首个 delta 通常无 content）
+                    .filter(chunk -> !chunk.isEmpty()) // 跳过空 chunk（首个 delta 通常无 content）
 //                    .take(1) // 收到第一个有内容的 chunk 即可
 //                    .timeout(Duration.ofSeconds(30))
                     .last()
