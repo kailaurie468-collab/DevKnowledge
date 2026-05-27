@@ -157,7 +157,13 @@ export function AiSettings() {
             {configs.map(config => (
               <button
                 key={config.id}
-                onClick={() => selectConfig(config)}
+                onClick={async () => {
+                  selectConfig(config)
+                  // 点击非激活配置时自动激活
+                  if (!config.isActive && config.id) {
+                    await handleActivate(config.id)
+                  }
+                }}
                 className={`w-full text-left p-3 rounded-lg border transition-all ${
                   selectedId === config.id
                     ? 'border-primary-500 bg-primary-50'

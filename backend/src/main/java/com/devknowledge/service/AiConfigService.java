@@ -175,6 +175,7 @@ public class AiConfigService {
             if (config == null || !config.getUserId().equals(userId)) {
                 throw new RuntimeException("配置不存在");
             }
+            deactivateAll(userId);
             activateConfig(userId, configId);
         }).subscribeOn(Schedulers.boundedElastic()).then();
     }
