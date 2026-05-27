@@ -6,6 +6,7 @@ import com.huaban.analysis.jieba.SegToken;
 import com.devknowledge.dto.AiConfigResponse;
 import com.devknowledge.dto.GenerateDemoRequest;
 import com.devknowledge.dto.KbChunkSearchResult;
+import com.devknowledge.dto.RagMetricResponse;
 import com.devknowledge.mapper.DemoMapper;
 import com.devknowledge.mapper.FrameworkMapper;
 import com.devknowledge.mapper.RagMetricMapper;
@@ -467,5 +468,40 @@ public class DemoService {
         return dailyUsage.entrySet().stream()
                 .map(e -> new AiConfigResponse.TokenUsage(e.getKey(), e.getValue()))
                 .toList();
+    }
+
+    /**
+     * 获取用户近 7 天的 RAG 指标
+     */
+    public List<RagMetricResponse> getRagMetrics(UUID userId) {
+        Instant sevenDaysAgo = Instant.now().minus(Duration.ofDays(7));
+        List<RagMetric> metrics = ragMetricMapper.selectList(
+                new LambdaQueryWrapper<RagMetric>()
+                        .eq(RagMetric::getUserId, userId)
+                        .ge(RagMetric::getCreatedAt, sevenDaysAgo)
+                        .orderByDesc(RagMetric::getCreatedAt));
+
+        List<RagMetricResponse> responses = new ArrayList<>();
+        for (RagMetric m : metrics) {
+            RagMetricResponse r = new RagMetricResponse();
+            r.setDemoId(m.getDemoId());
+            r.setKbId(m.getKbId());
+            r.setRagUsed(m.getRagUsed());
+            r.setTopK(m.getTopK());
+            r.setChunkCount(m.getChunkCount());
+            r.setAvgSimilarity(m.getAvgSimilarity());
+            r.setMaxSimilarity(m.getMaxSimilarity());
+            r.setMinSimilarity(m.getMinSimilarity());
+            r.setRetrievalMs(m.getRetrievalMs());
+            r.setToolCallCount(m.getToolCallCount());
+            r.setCreatedAt(m.getCreatedAt());
+
+            // 查询 Demo 标题
+            Demo demo = demoMapper.selectById(m.getDemoId());
+            r.setDemoTitle(demo != null ? demo.getTitle() : "未知");
+
+            responses.add(r);
+        }
+        return responses;
     }
 }

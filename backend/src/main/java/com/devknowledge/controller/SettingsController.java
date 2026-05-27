@@ -3,6 +3,7 @@ package com.devknowledge.controller;
 import com.devknowledge.dto.AiConfigRequest;
 import com.devknowledge.dto.AiConfigResponse;
 import com.devknowledge.dto.ProviderInfo;
+import com.devknowledge.dto.RagMetricResponse;
 import com.devknowledge.security.JwtTokenProvider;
 import com.devknowledge.service.AiConfigService;
 import com.devknowledge.service.DemoService;
@@ -112,6 +113,20 @@ public class SettingsController {
             @RequestHeader("Authorization") String authHeader) {
         UUID userId = extractUserId(authHeader);
         return Mono.fromCallable(() -> demoService.getTokenUsage(userId))
+                .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+                .map(ResponseEntity::ok);
+    }
+
+    // ==================== RAG 指标统计 ====================
+
+    /**
+     * 获取近 7 天 RAG 检索指标
+     */
+    @GetMapping("/user/rag-metrics")
+    public Mono<ResponseEntity<List<RagMetricResponse>>> getRagMetrics(
+            @RequestHeader("Authorization") String authHeader) {
+        UUID userId = extractUserId(authHeader);
+        return Mono.fromCallable(() -> demoService.getRagMetrics(userId))
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
                 .map(ResponseEntity::ok);
     }
