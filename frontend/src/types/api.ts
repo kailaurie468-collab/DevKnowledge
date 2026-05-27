@@ -231,3 +231,19 @@ export interface EmbeddingConfigRequest {
   apiKey: string
   baseUrl: string
 }
+
+// RAG Metrics
+export interface RagMetric {
+  demoId: string
+  demoTitle: string
+  kbId: string
+  ragUsed: boolean
+  topK: number
+  chunkCount: number
+  avgSimilarity: number
+  maxSimilarity: number
+  minSimilarity: number
+  retrievalMs: number
+  toolCallCount: number
+  createdAt: string
+}

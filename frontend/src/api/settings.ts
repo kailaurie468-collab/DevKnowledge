@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { AiConfig, AiConfigRequest, ProviderInfo, TokenUsage } from '@/types/api'
+import type { AiConfig, AiConfigRequest, ProviderInfo, TokenUsage, RagMetric } from '@/types/api'
 
 export const settingsApi = {
   getActiveConfig: () =>
@@ -25,4 +25,7 @@ export const settingsApi = {
 
   getProviders: () =>
     api.get<ProviderInfo[]>('/providers'),
+
+  getRagMetrics: () =>
+    api.get<RagMetric[]>('/user/rag-metrics'),
 }
