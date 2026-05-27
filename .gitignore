@@ -44,4 +44,4 @@ docker-compose.override.yml
 # Claude Code
 .claude/
 
-# 进度
+api.txt
