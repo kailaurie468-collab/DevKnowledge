@@ -117,7 +117,7 @@ public class DemoService {
                     List<KbChunkSearchResult> contextChunks =
                             kbService.searchKbVector(userId, req.getKbId(), req.getPrompt(), topK).block();
                     long retrievalMs = System.currentTimeMillis() - startTime;
-
+                    log.info("RAG预检索文档数量: {}", contextChunks.size());
                     if (contextChunks != null && !contextChunks.isEmpty()) {
                         systemPrompt += buildRagContext(contextChunks);
 
