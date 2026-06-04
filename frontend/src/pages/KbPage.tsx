@@ -109,34 +109,34 @@ export function KbPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-4">知识库</h1>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">知识库</h1>
 
       {showCreate ? (
-        <div className="mb-6 p-4 border border-gray-200 rounded-lg space-y-3">
+        <div className="mb-6 p-4 border border-gray-200 dark:border-gray-700 rounded-lg space-y-3 bg-white dark:bg-gray-800">
           <input
             type="text"
             value={newName}
             onChange={e => setNewName(e.target.value)}
             placeholder="知识库名称"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
           />
           <input
             type="text"
             value={newDesc}
             onChange={e => setNewDesc(e.target.value)}
             placeholder="描述（可选）"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
           />
             {/* Embedding 模型选择 */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Embedding 模型</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Embedding 模型</label>
               <select
                 value={embeddingModel}
                 onChange={e => {
                   setEmbeddingModel(e.target.value)
                   if (e.target.value === 'text-embedding-ada-002') setEmbeddingDimensions(undefined)
                 }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
               >
                 <option value="text-embedding-3-small">text-embedding-3-small（推荐，成本最低）</option>
                 <option value="text-embedding-3-large">text-embedding-3-large（效果最好）</option>
@@ -146,9 +146,9 @@ export function KbPage() {
 
             {/* 向量维度 */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 向量维度
-                <span className="text-xs text-gray-400 ml-2">（可选，创建后不可更改）</span>
+                <span className="text-xs text-gray-400 dark:text-gray-500 ml-2">（可选，创建后不可更改）</span>
               </label>
               <input
                 type="number"
@@ -158,15 +158,15 @@ export function KbPage() {
                              embeddingModel === 'text-embedding-3-large' ? '必须填 1536' :
                              'ada-002 不支持 dimensions'}
                 disabled={embeddingModel === 'text-embedding-ada-002'}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm disabled:bg-gray-100 disabled:text-gray-400"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-100 dark:disabled:bg-gray-600 disabled:text-gray-400"
               />
               {embeddingModel === 'text-embedding-3-large' && (
-                <p className="text-xs text-amber-600 mt-1">large 模型必须设置 dimensions=1536</p>
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">large 模型必须设置 dimensions=1536</p>
               )}
             </div>
           <div className="flex gap-2">
             <button onClick={handleCreate} className="px-3 py-1.5 bg-primary-600 text-white rounded-md text-sm">创建</button>
-            <button onClick={() => setShowCreate(false)} className="px-3 py-1.5 border border-gray-300 rounded-md text-sm">← 返回</button>
+            <button onClick={() => setShowCreate(false)} className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-300">← 返回</button>
           </div>
         </div>
       ) : (
@@ -183,14 +183,14 @@ export function KbPage() {
           <div className="flex items-center justify-between mb-4">
             <button
               onClick={() => { setSelectedKb(null); setDocuments([]); setSearchResults([]) }}
-              className="text-sm text-primary-600 hover:underline"
+              className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
             >
               ← 返回列表
             </button>
           </div>
 
           <div className="flex items-center justify-between mb-1">
-            <h2 className="text-lg font-semibold">{selectedKb.name}</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{selectedKb.name}</h2>
             <div className="flex gap-2">
               <input
                 ref={fileInputRef}
@@ -207,7 +207,7 @@ export function KbPage() {
               </button>
             </div>
           </div>
-          <p className="text-xs text-gray-400 mb-4">支持 TXT / MD / PDF / DOCX，单文件 ≤ 10MB，每库 ≤ 200 个文档</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">支持 TXT / MD / PDF / DOCX，单文件 ≤ 10MB，每库 ≤ 200 个文档</p>
 
           {/* 搜索栏 */}
           <div className="mb-4">
@@ -217,14 +217,14 @@ export function KbPage() {
           {/* 搜索结果 */}
           {searchResults.length > 0 && (
             <div className="mb-6 space-y-2">
-              <h3 className="text-sm font-medium text-gray-500">搜索结果（{searchResults.length}）</h3>
+              <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">搜索结果（{searchResults.length}）</h3>
               {searchResults.map(doc => (
-                <div key={doc.id} className="p-3 bg-gray-50 rounded border border-gray-200">
+                <div key={doc.id} className="p-3 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium text-gray-600">{doc.filename}</span>
-                    <span className="text-xs text-gray-400">{doc.fileType}</span>
+                    <span className="text-xs font-medium text-gray-600 dark:text-gray-400">{doc.filename}</span>
+                    <span className="text-xs text-gray-400 dark:text-gray-500">{doc.fileType}</span>
                   </div>
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap line-clamp-5">
+                  <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap line-clamp-5">
                     {doc.content?.slice(0, 500)}
                   </p>
                 </div>
@@ -234,23 +234,23 @@ export function KbPage() {
 
           {/* 文档列表 */}
           <div>
-            <h3 className="text-sm font-medium text-gray-500 mb-2">文档列表（{documents.length}）</h3>
+            <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">文档列表（{documents.length}）</h3>
             {documents.length > 0 ? (
               <div className="space-y-2">
                 {documents.map(doc => (
-                  <div key={doc.id} className="flex items-center justify-between p-2 border border-gray-200 rounded">
+                  <div key={doc.id} className="flex items-center justify-between p-2 border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800">
                     <div>
-                      <span className="text-sm font-medium">{doc.filename}</span>
+                      <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{doc.filename}</span>
                       <span className={`text-xs ml-2 px-1.5 py-0.5 rounded ${
-                        doc.status === 'ready' ? 'bg-green-100 text-green-700' :
-                        doc.status === 'error' ? 'bg-red-100 text-red-700' :
-                        doc.status === 'embedding' ? 'bg-blue-100 text-blue-700' :
-                        'bg-yellow-100 text-yellow-700'
+                        doc.status === 'ready' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
+                        doc.status === 'error' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400' :
+                        doc.status === 'embedding' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' :
+                        'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400'
                       }`}>
                         {doc.status === 'ready' ? '就绪' : doc.status === 'error' ? '错误' : doc.status === 'embedding' ? '向量化中' : '解析中'}
                       </span>
                       {doc.chunkCount != null && doc.chunkCount > 0 && (
-                        <span className="text-xs text-gray-400 ml-2">{doc.chunkCount} chunks</span>
+                        <span className="text-xs text-gray-400 dark:text-gray-500 ml-2">{doc.chunkCount} chunks</span>
                       )}
                       <span className="text-xs text-gray-400 ml-2">{doc.fileType}</span>
                     </div>

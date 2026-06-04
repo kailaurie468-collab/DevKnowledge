@@ -5,6 +5,7 @@ import { settingsApi } from '@/api/settings'
 import { useSSE } from '@/hooks/useSSE'
 import { useAuthStore } from '@/stores/authStore'
 import { useNotify } from '@/stores/notify'
+import { CustomSelect } from '@/components/effects/CustomSelect'
 import type { Demo, Framework, KnowledgeBase } from '@/types/api'
 import { knowledgeApi } from '@/api/knowledge'
 
@@ -107,7 +108,7 @@ export function DemoPage() {
   const { isAuthenticated } = useAuthStore()
   const { notify } = useNotify()
   const [prompt, setPrompt] = useState('')
-  const [language, setLanguage] = useState('typescript')
+  const [language, setLanguage] = useState('')
   const [frameworkId, setFrameworkId] = useState('')
   const [frameworks, setFrameworks] = useState<Framework[]>([])
   const [demos, setDemos] = useState<Demo[]>([])
@@ -119,6 +120,7 @@ export function DemoPage() {
   const [kbs, setKbs] = useState<KnowledgeBase[]>([])
   const [selectedKbId, setSelectedKbId] = useState('')
   const [topK, setTopK] = useState(3)
+  const [retrievalSource, setRetrievalSource] = useState<'rag' | 'wiki' | 'none'>('none')
   const [ragChunkCounts, setRagChunkCounts] = useState<Record<string, number>>({})
   const { isStreaming, output, events, stream, reset } = useSSE()
 
@@ -157,8 +159,9 @@ export function DemoPage() {
           prompt,
           language,
           frameworkId: frameworkId || undefined,
-          kbId: selectedKbId || undefined,
-          topK: selectedKbId ? topK : undefined,
+          kbId: retrievalSource === 'rag' ? selectedKbId || undefined : undefined,
+          topK: retrievalSource === 'rag' && selectedKbId ? topK : undefined,
+          retrievalSource: retrievalSource,
         })(signal),
       {
         onChunk: (chunk) => {
@@ -177,72 +180,126 @@ export function DemoPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-4">Demo 生成</h1>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Demo 生成</h1>
 
       <div className="mb-6 space-y-3">
+        {/* 输入区 */}
         <textarea
           value={prompt}
           onChange={e => setPrompt(e.target.value)}
           placeholder="描述你想要的代码... 例如 React useEffect 发起 API 请求并处理加载状态"
           rows={3}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
+          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
         />
-        <div className="flex gap-3">
-          <select
+
+        {/* 第一行：基础选项 + 生成按钮 */}
+        <div className="flex items-center gap-3">
+          <CustomSelect
             value={language}
-            onChange={e => setLanguage(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-md text-sm"
-          >
-            <option value="typescript">TypeScript</option>
-            <option value="javascript">JavaScript</option>
-            <option value="java">Java</option>
-            <option value="kotlin">Kotlin</option>
-            <option value="python">Python</option>
-          </select>
-          <select
+            onChange={setLanguage}
+            placeholder="选择语言..."
+            options={[
+              { value: 'typescript', label: 'TypeScript' },
+              { value: 'javascript', label: 'JavaScript' },
+              { value: 'java', label: 'Java' },
+              { value: 'kotlin', label: 'Kotlin' },
+              { value: 'python', label: 'Python' },
+            ]}
+            className="w-40"
+          />
+          <CustomSelect
             value={frameworkId}
-            onChange={e => setFrameworkId(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-md text-sm"
-          >
-            <option value="">选择框架（可选）</option>
-            {frameworks.map(fw => (
-              <option key={fw.id} value={fw.id}>{fw.name}</option>
-            ))}
-          </select>
-          <select
-            value={selectedKbId}
-            onChange={e => setSelectedKbId(e.target.value)}
-            disabled={kbs.length === 0}
-            className="px-3 py-2 border border-gray-300 rounded-md text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            title={kbs.length === 0 ? '暂无知识库，请先在知识库页面创建' : ''}
-          >
-            <option value="">{kbs.length > 0 ? '不使用知识库' : '暂无知识库'}</option>
-            {kbs.map(kb => (
-              <option key={kb.id} value={kb.id}>{kb.name}</option>
-            ))}
-          </select>
-            {/* Top-K 滑块 */}
-            {selectedKbId && (
-              <div className="flex items-center gap-3">
-                <label className="text-sm text-gray-600">检索数量:</label>
-                <input
-                  type="range"
-                  min={1}
-                  max={10}
-                  value={topK}
-                  onChange={e => setTopK(Number(e.target.value))}
-                  className="w-32"
-                />
-                <span className="text-sm font-medium text-gray-900 w-6">{topK}</span>
-              </div>
-            )}
+            onChange={setFrameworkId}
+            placeholder="选择框架（可选）"
+            options={[
+              { value: '', label: '不选择框架' },
+              ...frameworks.map(fw => ({ value: fw.id, label: fw.name })),
+            ]}
+            className="w-48"
+          />
+
+          <div className="flex-1" />
+
           <button
             onClick={handleGenerate}
-            disabled={isStreaming || !prompt.trim()}
-            className="px-4 py-2 bg-primary-600 text-white rounded-md text-sm font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors"
+            disabled={isStreaming || !prompt.trim() || !language || (retrievalSource === 'rag' && !selectedKbId)}
+            className="px-5 py-2 bg-primary-600 text-white rounded-md text-sm font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors"
           >
             {isStreaming ? '生成中...' : '生成'}
           </button>
+        </div>
+
+        {/* 第二行：知识检索配置 */}
+        <div className="bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg p-3 space-y-3">
+          {/* 检索源切换 */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wide">知识检索</span>
+            <div className="flex rounded-md overflow-hidden border border-gray-300 dark:border-gray-600">
+              {([
+                { value: 'none' as const, label: '不使用' },
+                { value: 'rag' as const, label: 'RAG 向量' },
+                { value: 'wiki' as const, label: 'Wiki 图谱' },
+              ]).map(source => (
+                <button
+                  key={source.value}
+                  onClick={() => {
+                    setRetrievalSource(source.value)
+                    if (source.value !== 'rag') setSelectedKbId('')
+                  }}
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    retrievalSource === source.value
+                      ? 'bg-primary-600 text-white'
+                      : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  {source.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* RAG 配置区 */}
+          {retrievalSource === 'rag' && (
+            <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">知识库</label>
+                <CustomSelect
+                  value={selectedKbId}
+                  onChange={setSelectedKbId}
+                  placeholder={kbs.length > 0 ? '选择知识库...' : '暂无知识库'}
+                  disabled={kbs.length === 0}
+                  options={kbs.map(kb => ({ value: kb.id, label: kb.name }))}
+                />
+              </div>
+
+              {selectedKbId && (
+                <div className="w-48">
+                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                    检索数量 <span className="font-medium text-gray-700 dark:text-gray-300">{topK}</span>
+                  </label>
+                  <input
+                    type="range"
+                    min={1}
+                    max={10}
+                    value={topK}
+                    onChange={e => setTopK(Number(e.target.value))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
+                  />
+                </div>
+              )}
+
+              {retrievalSource === 'rag' && !selectedKbId && (
+                <span className="text-xs text-amber-600">请选择知识库</span>
+              )}
+            </div>
+          )}
+
+          {/* Wiki 提示 */}
+          {retrievalSource === 'wiki' && (
+            <div className="text-xs text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20 border border-purple-100 dark:border-purple-800 rounded px-3 py-2">
+              将从 Wiki 知识图谱中检索相关页面作为上下文注入
+            </div>
+          )}
         </div>
       </div>
 
@@ -255,7 +312,7 @@ export function DemoPage() {
             }
             if (evt.event === 'thought') {
               return (
-                <div key={i} className="p-3 bg-blue-50 border-l-4 border-blue-400 rounded-r text-sm text-blue-800">
+                <div key={i} className="p-3 bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400 rounded-r text-sm text-blue-800 dark:text-blue-300">
                   <span className="font-medium">思考：</span>{evt.data}
                 </div>
               )
@@ -263,9 +320,9 @@ export function DemoPage() {
             if (evt.event === 'tool_call') {
               const [name, ...rest] = evt.data.split(':')
               return (
-                <div key={i} className="p-3 bg-amber-50 border-l-4 border-amber-400 rounded-r text-sm text-amber-800">
+                <div key={i} className="p-3 bg-amber-50 dark:bg-amber-900/20 border-l-4 border-amber-400 rounded-r text-sm text-amber-800 dark:text-amber-300">
                   <span className="font-medium">调用工具：</span>{name}
-                  {rest.length > 0 && <span className="text-amber-600 ml-2">({rest.join(':')})</span>}
+                  {rest.length > 0 && <span className="text-amber-600 dark:text-amber-400 ml-2">({rest.join(':')})</span>}
                 </div>
               )
             }
@@ -278,13 +335,13 @@ export function DemoPage() {
       {(output || selectedDemo) && (
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm font-medium text-gray-500">输出</h2>
+            <h2 className="text-sm font-medium text-gray-500 dark:text-gray-400">输出</h2>
             <button
               onClick={() => {
                 setSelectedDemo(null)
                 if (!selectedDemo) reset()
               }}
-              className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+              className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
             >
               × 关闭
             </button>
@@ -297,7 +354,7 @@ export function DemoPage() {
       {isAuthenticated && (
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-medium text-gray-500">历史记录 {demoTotal > 0 && `(${demoTotal})`}</h2>
+            <h2 className="text-sm font-medium text-gray-500 dark:text-gray-400">历史记录 {demoTotal > 0 && `(${demoTotal})`}</h2>
             <div className="flex gap-2">
               <input
                 type="text"
@@ -305,11 +362,11 @@ export function DemoPage() {
                 onChange={e => setDemoKeyword(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') fetchDemos(1, demoKeyword) }}
                 placeholder="搜索标题、描述..."
-                className="px-2 py-1 border border-gray-300 rounded text-xs w-40 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                className="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-xs w-40 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
               <button
                 onClick={() => fetchDemos(1, demoKeyword)}
-                className="px-2 py-1 text-xs text-primary-600 hover:bg-primary-50 rounded transition-colors"
+                className="px-2 py-1 text-xs text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded transition-colors"
               >
                 搜索
               </button>
@@ -323,12 +380,12 @@ export function DemoPage() {
                   <div key={demo.id} className="flex items-stretch gap-2">
                     <button
                       onClick={() => setSelectedDemo(demo)}
-                      className="flex-1 text-left p-3 border border-gray-200 rounded-lg hover:border-primary-300 transition-all"
+                      className="flex-1 text-left p-3 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-primary-300 dark:hover:border-primary-500 transition-all bg-white dark:bg-gray-800"
                     >
-                      <h3 className="font-medium text-sm text-gray-900">{demo.title}</h3>
+                      <h3 className="font-medium text-sm text-gray-900 dark:text-gray-100">{demo.title}</h3>
                       <div className="flex items-center gap-2 mt-1">
-                        <p className="text-xs text-gray-500 truncate flex-1">{demo.prompt}</p>
-                        <span className="text-xs text-gray-400 whitespace-nowrap">
+                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate flex-1">{demo.prompt}</p>
+                        <span className="text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">
                           RAG: {ragChunkCounts[demo.id] ?? 0} 篇
                         </span>
                       </div>
@@ -363,11 +420,11 @@ export function DemoPage() {
                   <button
                     onClick={() => fetchDemos(demoPage - 1)}
                     disabled={demoPage <= 1}
-                    className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-700 dark:text-gray-300"
                   >
                     上一页
                   </button>
-                  <span className="text-xs text-gray-500">{demoPage} / {demoTotalPages}</span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">{demoPage} / {demoTotalPages}</span>
                   <button
                     onClick={() => fetchDemos(demoPage + 1)}
                     disabled={demoPage >= demoTotalPages}

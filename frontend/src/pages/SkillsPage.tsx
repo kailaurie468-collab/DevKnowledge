@@ -110,7 +110,7 @@ export function SkillsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-4">Skills 构建</h1>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Skills 构建</h1>
 
       {/* 提取区 */}
       <div className="mb-6 space-y-3">
@@ -119,7 +119,7 @@ export function SkillsPage() {
           onChange={e => setDescription(e.target.value)}
           placeholder="描述一个工作流... 例如：创建 React 组件，包含 TypeScript 类型、单元测试和 Storybook 故事"
           rows={3}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
+          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
         />
         <button
           onClick={handleExtract}
@@ -133,7 +133,7 @@ export function SkillsPage() {
       {/* 提取结果 */}
       {output && (
         <div className="mb-6">
-          <h2 className="text-sm font-medium text-gray-500 mb-2">提取结果</h2>
+          <h2 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">提取结果</h2>
           <pre className="p-4 bg-gray-900 text-gray-100 rounded-lg text-sm overflow-auto whitespace-pre-wrap max-h-96">
             {output}
           </pre>
@@ -142,34 +142,34 @@ export function SkillsPage() {
 
       {/* 选中的 Skill 详情 */}
       {selectedSkill && (
-        <div className="mb-6 p-4 border border-gray-200 rounded-lg">
+        <div className="mb-6 p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-gray-900">{selectedSkill.name}</h2>
+            <h2 className="font-semibold text-gray-900 dark:text-gray-100">{selectedSkill.name}</h2>
             <div className="flex gap-3">
               <button
                 onClick={() => handleExport(selectedSkill.id)}
-                className="text-sm text-primary-600 hover:underline"
+                className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
               >
                 导出 .md
               </button>
               <button
                 onClick={() => setSelectedSkill(null)}
-                className="text-sm text-gray-400 hover:text-gray-600"
+                className="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
               >
                 关闭
               </button>
             </div>
           </div>
-          <p className="text-sm text-gray-600 mb-3">{selectedSkill.description}</p>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">{selectedSkill.description}</p>
           <div className="space-y-2">
             {selectedSkill.steps.map(step => (
-              <div key={step.id} className="p-3 bg-gray-50 rounded">
+              <div key={step.id} className="p-3 bg-gray-50 dark:bg-gray-700 rounded">
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs font-mono text-gray-400">#{step.stepOrder}</span>
-                  <span className="text-xs px-1.5 py-0.5 bg-gray-200 rounded">{step.stepType}</span>
-                  <span className="font-medium text-sm">{step.title}</span>
+                  <span className="text-xs font-mono text-gray-400 dark:text-gray-500">#{step.stepOrder}</span>
+                  <span className="text-xs px-1.5 py-0.5 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded">{step.stepType}</span>
+                  <span className="font-medium text-sm text-gray-900 dark:text-gray-100">{step.title}</span>
                 </div>
-                <p className="text-sm text-gray-600">{step.description}</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">{step.description}</p>
               </div>
             ))}
           </div>
@@ -178,13 +178,13 @@ export function SkillsPage() {
 
       {/* Tab 切换 */}
       <div>
-        <div className="flex gap-1 mb-4 border-b border-gray-200">
+        <div className="flex gap-1 mb-4 border-b border-gray-200 dark:border-gray-700">
           <button
             onClick={() => setTab('mine')}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               tab === 'mine'
-                ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
             }`}
           >
             我的 Skills {isAuthenticated && `(${skills.length})`}
@@ -193,13 +193,13 @@ export function SkillsPage() {
             onClick={() => setTab('suggested')}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               tab === 'suggested'
-                ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                ? 'border-primary-600 text-primary-600 dark:text-primary-400'
+                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
             }`}
           >
             推荐
             {pendingSuggestions.length > 0 && (
-              <span className="ml-1.5 px-1.5 py-0.5 bg-primary-100 text-primary-700 text-xs rounded-full">
+              <span className="ml-1.5 px-1.5 py-0.5 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 text-xs rounded-full">
                 {pendingSuggestions.length}
               </span>
             )}

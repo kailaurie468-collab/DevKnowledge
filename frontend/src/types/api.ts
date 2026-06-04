@@ -73,6 +73,7 @@ export interface GenerateDemoRequest {
   maxIterations?: number
   kbId?: string
   topK?: number
+  retrievalSource?: 'rag' | 'wiki' | 'none'
 }
 
 export interface Demo {

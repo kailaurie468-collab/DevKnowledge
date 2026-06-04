@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Layout } from '@/components/layout/Layout'
 import { ParticleContext } from '@/stores/particleContext'
 import { NotifyProvider } from '@/stores/notify'
-import Antigravity from '@/components/Antigravity'
+import Antigravity from '@/components/effects/Antigravity'
 import { HomePage } from '@/pages/HomePage'
 import { KnowledgePage } from '@/pages/KnowledgePage'
 import { DemoPage } from '@/pages/DemoPage'
@@ -12,6 +12,7 @@ import { KbPage } from '@/pages/KbPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { RagMetricsPage } from '@/pages/RagMetricsPage'
+import { WikiPage } from '@/pages/WikiPage'
 
 export default function App() {
   const [particleVisible, setParticleVisible] = useState(true)
@@ -57,6 +58,7 @@ export default function App() {
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="/kb" element={<KbPage />} />
             <Route path="/rag-metrics" element={<RagMetricsPage />} />
+            <Route path="/wiki" element={<WikiPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Routes>
