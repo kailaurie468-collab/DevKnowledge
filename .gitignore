@@ -45,4 +45,11 @@ docker-compose.override.yml
 # Claude Code
 .claude/
 
+# 应用数据目录
+raw_files/
+wiki_vault/
+
 api.txt
+
+#日志
+logs/

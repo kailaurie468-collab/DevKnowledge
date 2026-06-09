@@ -2,7 +2,7 @@ import { api } from './client'
 import type { KnowledgeBase, KbDocument } from '@/types/api'
 
 export const kbApi = {
-  createKb: (data: { name: string; description?: string; embeddingModel?: string; embeddingDimensions?: number }) =>
+  createKb: (data: { name: string; description?: string; embeddingModel?: string }) =>
     api.post<KnowledgeBase>('/kb', data),
 
   getKbs: () =>
@@ -47,6 +47,9 @@ export const kbApi = {
 
   deleteDocument: (docId: string) =>
     api.delete<void>(`/kb/documents/${docId}`),
+
+  retryDocument: (docId: string) =>
+    api.post<KbDocument>(`/kb/documents/${docId}/retry`),
 
   searchKb: (kbId: string, query: string) =>
     api.get<KbDocument[]>(`/kb/${kbId}/search`, { q: query }),

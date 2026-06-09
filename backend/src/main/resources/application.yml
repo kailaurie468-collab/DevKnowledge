@@ -39,6 +39,11 @@ jwt:
   access-token-expiration: 7200000    # 2 hours
   refresh-token-expiration: 604800000 # 7 days
 
-logging:
-  level:
-    com.devknowledge: DEBUG
+wiki:
+  vault:
+    path: wiki_vault
+
+kb:
+  raw-file:
+    storage-path: raw_files
+

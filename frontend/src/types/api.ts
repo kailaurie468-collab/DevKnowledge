@@ -143,7 +143,6 @@ export interface KnowledgeBase {
   description?: string
   documentCount?: number
   embeddingModel?: string
-  embeddingDimensions?: number
   createdAt: string
   updatedAt: string
 }

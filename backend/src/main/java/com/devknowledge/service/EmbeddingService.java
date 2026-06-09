@@ -14,7 +14,8 @@ import java.util.*;
 public class EmbeddingService {
 
     private static final Logger log = LoggerFactory.getLogger(EmbeddingService.class);
-    private static final int VECTOR_DIMENSION = 1536;
+    /** 全局统一的 Embedding 向量维度 */
+    public static final int VECTOR_DIMENSION = 1024;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
@@ -65,7 +66,7 @@ public class EmbeddingService {
                 for (int i = 0; i < embeddingNode.size(); i++) {
                     raw[i] = (float) embeddingNode.get(i).asDouble();
                 }
-                vectors.add(padToTargetDimension(raw, VECTOR_DIMENSION));
+                vectors.add(raw);
             }
 
             log.info("Embedding 完成: {} 个向量, promptTokens={}", vectors.size(), promptTokens);
@@ -116,13 +117,6 @@ public class EmbeddingService {
             log.warn("Embedding 连通性测试失败: {}", e.getMessage());
             return false;
         }
-    }
-
-    private float[] padToTargetDimension(float[] original, int targetDim) {
-        if (original.length == targetDim) return original;
-        float[] padded = new float[targetDim];
-        System.arraycopy(original, 0, padded, 0, Math.min(original.length, targetDim));
-        return padded;
     }
 
     /** Embedding 结果：向量列表 + token 消耗 */

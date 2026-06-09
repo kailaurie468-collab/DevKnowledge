@@ -1,5 +1,6 @@
 package com.devknowledge.controller;
 
+import com.devknowledge.dto.KbChunkSearchResult;
 import com.devknowledge.dto.KbCreateRequest;
 import com.devknowledge.model.KbDocument;
 import com.devknowledge.model.KnowledgeBase;
@@ -121,6 +122,21 @@ public class KbController {
                 .then(Mono.just(ResponseEntity.noContent().<Void>build()));
     }
 
+    /**
+     * 重试文档解析
+     * 解析失败后，根据文档 ID 重新触发解析（复用已存储的原始文件）
+     */
+    @PostMapping("/documents/{docId}/retry")
+    public Mono<ResponseEntity<KbDocument>> retryDocument(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable UUID docId) {
+        UUID userId = extractUserId(authHeader);
+        if (userId == null) return Mono.just(ResponseEntity.status(401).build());
+        return kbService.retryDocument(docId, userId)
+                .map(ResponseEntity::ok)
+                .onErrorResume(e -> Mono.just(ResponseEntity.badRequest().build()));
+    }
+
     @GetMapping("/{id}/search")
     public Mono<ResponseEntity<List<KbDocument>>> searchKb(
             @RequestHeader("Authorization") String authHeader,
@@ -129,6 +145,21 @@ public class KbController {
         UUID userId = extractUserId(authHeader);
         if (userId == null) return Mono.just(ResponseEntity.status(401).build());
         return kbService.searchKb(id, query).map(ResponseEntity::ok);
+    }
+
+    /**
+     * BM25 关键词检索
+     * 使用 Jieba 分词 + PostgreSQL tsvector 实现中文全文检索
+     */
+    @GetMapping("/{id}/search/bm25")
+    public Mono<ResponseEntity<List<KbChunkSearchResult>>> searchByBm25(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable UUID id,
+            @RequestParam("q") String query,
+            @RequestParam(defaultValue = "10") int topK) {
+        UUID userId = extractUserId(authHeader);
+        if (userId == null) return Mono.just(ResponseEntity.status(401).build());
+        return kbService.searchByBm25(id, query, topK).map(ResponseEntity::ok);
     }
 
     private UUID extractUserId(String authHeader) {

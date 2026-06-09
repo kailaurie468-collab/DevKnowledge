@@ -24,6 +24,7 @@ import com.devknowledge.dto.KbChunkSearchResult;
 import com.devknowledge.mapper.KbChunkMapper;
 import com.devknowledge.model.KbChunk;
 import com.devknowledge.model.UserEmbeddingConfig;
+import com.devknowledge.model.UserRerankerConfig;
 import com.devknowledge.security.AesUtil;
 import org.springframework.beans.factory.annotation.Value;
 
@@ -45,6 +46,12 @@ public class KbService {
     private final EmbeddingConfigService embeddingConfigService;
     private final EmbeddingUsageService embeddingUsageService;
     private final KbChunkMapper chunkMapper;
+    private final MarkdownChunker markdownChunker;
+    private final RawFileStorageService rawFileStorageService;
+    private final JiebaSegmenter jiebaSegmenter;
+    private final RrfRanker rrfRanker;
+    private final RerankerService rerankerService;
+    private final RerankerConfigService rerankerConfigService;
 
     @Value("${jwt.secret}")
     private String aesSecret;
@@ -64,7 +71,6 @@ public class KbService {
             kb.setUpdatedAt(Instant.now());
             kb.setEmbeddingModel(req.getEmbeddingModel() != null
                     ? req.getEmbeddingModel() : "text-embedding-3-small");
-            kb.setEmbeddingDimensions(req.getEmbeddingDimensions());
             kbMapper.insert(kb);
             return kb;
         }).subscribeOn(Schedulers.boundedElastic());
@@ -99,6 +105,10 @@ public class KbService {
 
     // ==================== 文档管理 ====================
 
+    /**
+     * 上传文档
+     * 流程：1) 存储原始文件 2) 解析文本 3) 异步切分+向量化
+     */
     public Mono<KbDocument> uploadDocument(UUID kbId, String filename, long fileSize, byte[] content, Integer minChunkSize, Integer maxChunkSize) {
         return Mono.fromCallable(() -> {
             if (fileSize > MAX_FILE_SIZE) {
@@ -125,8 +135,16 @@ public class KbService {
             doc.setCreatedAt(Instant.now());
             docMapper.insert(doc);
 
+            // 存储原始文件到磁盘（用于后续重试）
+            try {
+                rawFileStorageService.store(kbId, doc.getId(), filename, content);
+            } catch (Exception e) {
+                log.warn("存储原始文件失败（不影响解析）: {}", e.getMessage());
+            }
+
             parseExecutor.submit(() -> {
                 try {
+                    // 根据文件大小选择解析策略：< 1MB 直接解析，>= 1MB 流式解析
                     String text = fileParserService.parse(filename, content);
                     doc.setContent(text);
                     doc.setStatus("embedding");
@@ -144,10 +162,79 @@ public class KbService {
                         chunkAndEmbed(kbId, doc.getId(), doc.getContent(), minChunkSize, maxChunkSize);
                         doc.setStatus("ready");
                         log.info("文档向量化完成: {}", filename);
+                        // 解析+向量化全部成功，删除原始文件释放磁盘空间
+                        rawFileStorageService.delete(kbId, doc.getId());
                     } catch (Exception embedEx) {
                         doc.setStatus("error");
                         doc.setErrorMessage("向量化失败: " + embedEx.getMessage());
                         log.warn("文档向量化失败: {} - {}", filename, embedEx.getMessage());
+                    }
+                    docMapper.updateById(doc);
+                }
+            });
+
+            return doc;
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * 文档解析重试
+     * 从磁盘读取原始文件，重新执行解析 + 向量化
+     */
+    public Mono<KbDocument> retryDocument(UUID docId, UUID userId) {
+        return Mono.fromCallable(() -> {
+            KbDocument doc = docMapper.selectById(docId);
+            if (doc == null) throw new RuntimeException("文档不存在");
+
+            KnowledgeBase kb = kbMapper.selectById(doc.getKbId());
+            if (kb == null || !kb.getUserId().equals(userId)) {
+                throw new RuntimeException("无权操作");
+            }
+
+            if (!"error".equals(doc.getStatus())) {
+                throw new RuntimeException("文档状态不是错误，无需重试");
+            }
+
+            // 读取原始文件
+            byte[] rawContent;
+            try {
+                rawContent = rawFileStorageService.read(kb.getId(), docId, doc.getFilename());
+            } catch (Exception e) {
+                throw new RuntimeException("原始文件不存在，无法重试: " + e.getMessage());
+            }
+
+            // 重置状态
+            doc.setStatus("processing");
+            doc.setErrorMessage(null);
+            doc.setContent(null);
+            doc.setChunkCount(null);
+            docMapper.updateById(doc);
+
+            // 异步重新解析
+            byte[] finalRawContent = rawContent;
+            parseExecutor.submit(() -> {
+                try {
+                    String text = fileParserService.parse(doc.getFilename(), finalRawContent);
+                    doc.setContent(text);
+                    doc.setStatus("embedding");
+                    log.info("重试解析完成: {} ({}字)", doc.getFilename(), text.length());
+                } catch (Exception e) {
+                    doc.setStatus("error");
+                    doc.setErrorMessage(e.getMessage());
+                    log.error("重试解析失败: {} - {}", doc.getFilename(), e.getMessage());
+                }
+                docMapper.updateById(doc);
+
+                if ("embedding".equals(doc.getStatus())) {
+                    try {
+                        chunkAndEmbed(doc.getKbId(), doc.getId(), doc.getContent(), null, null);
+                        doc.setStatus("ready");
+                        log.info("重试向量化完成: {}", doc.getFilename());
+                        // 重试成功，删除原始文件
+                        rawFileStorageService.delete(doc.getKbId(), doc.getId());
+                    } catch (Exception embedEx) {
+                        doc.setStatus("error");
+                        doc.setErrorMessage("向量化失败: " + embedEx.getMessage());
                     }
                     docMapper.updateById(doc);
                 }
@@ -172,6 +259,14 @@ public class KbService {
             if (doc == null) throw new RuntimeException("文档不存在");
             KnowledgeBase kb = kbMapper.selectById(doc.getKbId());
             if (kb == null || !kb.getUserId().equals(userId)) throw new RuntimeException("无权删除");
+
+            // 删除关联的 chunks
+            chunkMapper.delete(
+                    new LambdaQueryWrapper<KbChunk>().eq(KbChunk::getDocId, docId));
+
+            // 删除原始文件
+            rawFileStorageService.delete(kb.getId(), docId);
+
             docMapper.deleteById(docId);
             return null;
         }).subscribeOn(Schedulers.boundedElastic()).then();
@@ -199,13 +294,13 @@ public class KbService {
 
     /**
      * 文档切分 + 向量化
+     * Markdown 内容使用 flexmark-java AST 切分，纯文本使用段落切分
      */
     private void chunkAndEmbed(UUID kbId, UUID docId, String content, Integer minChunkSize, Integer maxChunkSize) {
         KnowledgeBase kb = kbMapper.selectById(kbId);
         if (kb == null) return;
 
         String model = kb.getEmbeddingModel();
-        Integer dimensions = kb.getEmbeddingDimensions();
 
         UserEmbeddingConfig embedConfig = embeddingConfigService.getActiveConfig(kb.getUserId());
         if (embedConfig == null) {
@@ -214,7 +309,8 @@ public class KbService {
         }
         AesUtil aes = new AesUtil(aesSecret);
         String apiKey = aes.decrypt(embedConfig.getApiKey());
-        // 切分文档
+
+        // 使用 MarkdownChunker 或纯文本切分
         List<String> chunks = splitIntoChunks(content, minChunkSize, maxChunkSize);
         log.info("文档切分完成: {} 个 chunk", chunks.size());
 
@@ -223,10 +319,10 @@ public class KbService {
         List<KbChunk> chunksList = new ArrayList<>();
         for (List<String> batch : partition(chunks, 20)) {
             EmbeddingService.EmbeddingResult result = embeddingService.embedBatch(
-                    batch, embedConfig.getBaseUrl(), apiKey, model, dimensions);
+                    batch, embedConfig.getBaseUrl(), apiKey, model, EmbeddingService.VECTOR_DIMENSION);
             totalTokens += result.promptTokens();
 
-            // 批量插入 chunk（content + embedding 一次写入）
+            // 批量插入 chunk（含 Jieba 分词 tsvector）
             for (int i = 0; i < batch.size(); i++) {
                 KbChunk chunk = new KbChunk();
                 chunk.setId(UUID.randomUUID());
@@ -236,9 +332,11 @@ public class KbService {
                 chunk.setContent(batch.get(i));
                 chunk.setEmbedding(EmbeddingService.vectorToString(result.vectors().get(i)));
                 chunk.setCreatedAt(Instant.now());
+                // Jieba 分词后存入 tsvector 列，用于 BM25 关键词检索
+                chunk.setTsv(jiebaSegmenter.segment(batch.get(i)));
                 chunksList.add(chunk);
             }
-            chunkMapper.insert(chunksList);
+            chunkMapper.insertBatchWithTsv(chunksList);
             chunksList.clear();
             if (chunks.size() > 20) {
                 try { Thread.sleep(200); } catch (InterruptedException ignored) {}
@@ -255,20 +353,23 @@ public class KbService {
         }
     }
 
-    // ==================== 段落切分 ====================
+    // ==================== 文档切分 ====================
 
-    // Markdown 块类型枚举
-    private enum BlockType { CODE, HEADING, LIST, TABLE, PARAGRAPH }
+    /**
+     * 切分内容为 chunk 列表
+     * Markdown 内容使用 flexmark-java AST 切分，纯文本使用段落切分
+     */
+    private List<String> splitIntoChunks(String content, Integer minChunkSize, Integer maxChunkSize) {
+        if (content == null || content.isBlank()) return List.of();
 
-    // Markdown 结构块
-    private static class MarkdownBlock {
-        final BlockType type;
-        final String content;
-        final String headingPrefix; // 用于 HEADING 类型，记录标题前缀
-        MarkdownBlock(BlockType type, String content, String headingPrefix) {
-            this.type = type;
-            this.content = content;
-            this.headingPrefix = headingPrefix;
+        if (isMarkdownContent(content)) {
+            // 使用 flexmark-java AST 切分
+            return markdownChunker.split(content, minChunkSize, maxChunkSize);
+        } else {
+            // 纯文本：使用段落切分
+            int minSize = (minChunkSize != null && minChunkSize >= 20) ? minChunkSize : DEFAULT_MIN_CHUNK_SIZE;
+            int maxSize = (maxChunkSize != null && maxChunkSize >= minSize + 50) ? maxChunkSize : DEFAULT_MAX_CHUNK_SIZE;
+            return splitPlainText(content, minSize, maxSize);
         }
     }
 
@@ -292,194 +393,7 @@ public class KbService {
     }
 
     /**
-     * 状态机解析 Markdown 内容为结构块列表
-     * 同类型的连续行会合并为一个块
-     */
-    private List<MarkdownBlock> extractMarkdownBlocks(String content) {
-        List<MarkdownBlock> blocks = new ArrayList<>();
-        String[] lines = content.split("\n", -1);
-        BlockType currentType = null;
-        // 结果缓冲区
-        StringBuilder buffer = new StringBuilder();
-        String currentHeadingPrefix = null;
-
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty()) continue;
-            BlockType lineType = detectLineType(trimmed, currentType);
-
-            if (currentType != null && lineType != currentType) {
-                // 类型变化，刷出缓冲区
-                flushBuffer(blocks, currentType, buffer, currentHeadingPrefix);
-                buffer.setLength(0);
-                currentHeadingPrefix = null;
-            }
-
-            currentType = lineType;
-            if (lineType == BlockType.HEADING && currentHeadingPrefix == null) {
-                // 提取标题前缀（如 "## "）
-                int spaceIdx = trimmed.indexOf(' ');
-                currentHeadingPrefix = spaceIdx > 0 ? trimmed.substring(0, spaceIdx + 1) : trimmed + " ";
-            }
-            if (!buffer.isEmpty()) buffer.append("\n");
-            buffer.append(line);
-        }
-
-        // 刷出最后一个缓冲区
-        if (!buffer.isEmpty()) {
-            flushBuffer(blocks, currentType, buffer, currentHeadingPrefix);
-        }
-        return blocks;
-    }
-
-    /**
-     * 检测单行的 Markdown 类型
-     * 在代码围栏内部时保持 CODE 类型
-     */
-    private BlockType detectLineType(String trimmed, BlockType currentType) {
-        if (trimmed.startsWith("```")) return BlockType.CODE;
-        if (currentType == BlockType.CODE) return BlockType.CODE;
-        if (trimmed.matches("^#{1,6}\\s+.+")) return BlockType.HEADING;
-        if (trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.length() > 2) return BlockType.TABLE;
-        if (trimmed.matches("^[-*+]\\s+.*") || trimmed.matches("^\\d+\\.\\s+.*")) return BlockType.LIST;
-        return BlockType.PARAGRAPH;
-    }
-
-    /**
-     * 将缓冲区内容刷出为 MarkdownBlock
-     */
-    private void flushBuffer(List<MarkdownBlock> blocks, BlockType type, StringBuilder buffer, String headingPrefix) {
-        if (buffer.length() == 0) return;
-        String text = buffer.toString().trim();
-        if (text.isEmpty()) return;
-        blocks.add(new MarkdownBlock(type, text, headingPrefix));
-    }
-
-    /**
-     * 根据 minSize/maxSize 调整块大小
-     * CODE 块原样输出；HEADING 块超长时按标题拆分；其他块合并或拆分
-     */
-    private List<String> adjustBlockSize(List<MarkdownBlock> blocks, int minSize, int maxSize) {
-        List<String> result = new ArrayList<>();
-        StringBuilder mergeBuffer = new StringBuilder();
-
-        for (MarkdownBlock block : blocks) {
-            if (block.type == BlockType.CODE) {
-                // 代码块原样输出，先刷出合并缓冲区
-                if (mergeBuffer.length() > 0) {
-                    result.add(mergeBuffer.toString());
-                    mergeBuffer.setLength(0);
-                }
-                result.add(block.content);
-                continue;
-            }
-
-            if (block.type == BlockType.HEADING && block.content.length() > maxSize) {
-                // 标题块过长：刷出合并缓冲区，按子标题拆分
-                if (mergeBuffer.length() > 0) {
-                    result.add(mergeBuffer.toString());
-                    mergeBuffer.setLength(0);
-                }
-                // 从内容中分离标题行和正文
-                int firstNewline = block.content.indexOf('\n');
-                String headingLine = firstNewline > 0 ? block.content.substring(0, firstNewline) : block.content;
-                String body = firstNewline > 0 ? block.content.substring(firstNewline + 1) : "";
-                // 按空行拆分正文
-                String[] bodyParts = body.split("\\n\\n+");
-                for (String part : bodyParts) {
-                    String trimmed = part.trim();
-                    if (trimmed.isEmpty()) continue;
-                    String chunk = headingLine + "\n" + trimmed;
-                    if (chunk.length() > maxSize) {
-                        // 子块仍然过长，用 splitLongParagraph 拆分正文
-                        for (String sub : splitLongParagraph(trimmed)) {
-                            result.add(headingLine + "\n" + sub);
-                        }
-                    } else {
-                        result.add(chunk);
-                    }
-                }
-                continue;
-            }
-
-            // 普通块（PARAGRAPH/LIST/TABLE/短 HEADING）
-            if (block.content.length() < minSize) {
-                // 过小，尝试合并
-                if (mergeBuffer.length() > 0) mergeBuffer.append("\n\n");
-                mergeBuffer.append(block.content);
-            } else if (block.content.length() > maxSize) {
-                // 过大，先刷出合并缓冲区
-                if (mergeBuffer.length() > 0) {
-                    result.add(mergeBuffer.toString());
-                    mergeBuffer.setLength(0);
-                }
-                if (block.type == BlockType.PARAGRAPH) {
-                    // 段落类型用 splitLongParagraph 拆分
-                    result.addAll(splitLongParagraph(block.content));
-                } else {
-                    // 列表/表格：按行拆分后重新组装
-                    result.addAll(splitByLines(block.content, maxSize));
-                }
-            } else {
-                // 大小合适，先刷出合并缓冲区，再输出当前块
-                if (mergeBuffer.length() > 0) {
-                    result.add(mergeBuffer.toString());
-                    mergeBuffer.setLength(0);
-                }
-                result.add(block.content);
-            }
-        }
-
-        // 刷出最后的合并缓冲区
-        if (mergeBuffer.length() > 0) {
-            result.add(mergeBuffer.toString());
-        }
-        return result;
-    }
-
-    /**
-     * 按行拆分超长内容（用于列表/表格等不适合按段落拆分的类型）
-     */
-    private List<String> splitByLines(String text, int maxSize) {
-        List<String> result = new ArrayList<>();
-        StringBuilder buffer = new StringBuilder();
-        for (String line : text.split("\n", -1)) {
-            if (buffer.length() + line.length() + 1 > maxSize && buffer.length() > 0) {
-                result.add(buffer.toString());
-                buffer.setLength(0);
-            }
-            if (buffer.length() > 0) buffer.append("\n");
-            buffer.append(line);
-        }
-        if (buffer.length() > 0) {
-            result.add(buffer.toString());
-        }
-        return result;
-    }
-
-    /**
-     * 切分内容为 chunk 列表
-     * Markdown 内容使用结构感知切分，纯文本使用原有的空行切分
-     */
-    private List<String> splitIntoChunks(String content, Integer minChunkSize, Integer maxChunkSize) {
-        if (content == null || content.isBlank()) return List.of();
-
-        // 参数校验与默认值
-        int minSize = (minChunkSize != null && minChunkSize >= 20) ? minChunkSize : DEFAULT_MIN_CHUNK_SIZE;
-        int maxSize = (maxChunkSize != null && maxChunkSize >= minSize + 50) ? maxChunkSize : DEFAULT_MAX_CHUNK_SIZE;
-
-        if (isMarkdownContent(content)) {
-            // Markdown 结构感知切分
-            List<MarkdownBlock> blocks = extractMarkdownBlocks(content);
-            return adjustBlockSize(blocks, minSize, maxSize);
-        } else {
-            // 纯文本：使用原有逻辑
-            return splitPlainText(content, minSize, maxSize);
-        }
-    }
-
-    /**
-     * 纯文本切分（原有逻辑重构，支持自定义大小）
+     * 纯文本切分
      */
     private List<String> splitPlainText(String content, int minSize, int maxSize) {
         String[] rawParts = content.split("\\n\\n+");
@@ -546,34 +460,94 @@ public class KbService {
     // ==================== 向量检索 ====================
 
     /**
-     * 向量检索知识库
+     * 混合检索知识库（BM25 + 向量 + RRF 融合排序）
+     * BM25 和 Embedding 两条通道各召回 top-20，使用 RRF 融合重排后输出 topK 候选集
      */
     public Mono<List<KbChunkSearchResult>> searchKbVector(UUID userId, UUID kbId, String query, int topK) {
         return Mono.fromCallable(() -> {
             KnowledgeBase kb = kbMapper.selectById(kbId);
             if (kb == null) return List.<KbChunkSearchResult>of();
 
+            // 通道一：BM25 关键词检索（top-20）
+            String tsQuery = jiebaSegmenter.buildTsQuery(query);
+            List<KbChunkSearchResult> bm25Results = tsQuery.isBlank()
+                    ? List.of()
+                    : chunkMapper.searchByBm25(kbId, tsQuery, 20);
+            log.info("BM25 召回 {} 条, tsQuery={}", bm25Results.size(), tsQuery);
+
+            // 通道二：向量检索（top-20）
+            List<KbChunkSearchResult> vectorResults;
             UserEmbeddingConfig embedConfig = embeddingConfigService.getActiveConfig(userId);
             if (embedConfig == null) {
-                log.warn("用户未配置 Embedding AI，回退到 LIKE 搜索");
-                return searchKbFallback(kbId, query);
+                log.warn("用户未配置 Embedding AI，向量通道回退到 LIKE 搜索");
+                vectorResults = searchKbFallback(kbId, query);
+            } else {
+                AesUtil aes = new AesUtil(aesSecret);
+                String apiKey = aes.decrypt(embedConfig.getApiKey());
+                EmbeddingService.EmbeddingResult result = embeddingService.embedBatch(
+                        List.of(query), embedConfig.getBaseUrl(), apiKey,
+                        kb.getEmbeddingModel(), 1024);
+                float[] queryVector = result.vectors().get(0);
+                embeddingUsageService.recordUsage(userId, embedConfig.getId(), result.promptTokens());
+                String vectorStr = EmbeddingService.vectorToString(queryVector);
+                vectorResults = chunkMapper.searchByVector(kbId, vectorStr, 20);
+            }
+            log.info("向量通道召回 {} 条", vectorResults.size());
+
+            // RRF 融合排序：候选池取较大值，给 Reranker 足够的精选空间
+            UserRerankerConfig rerankerConfig;
+            boolean hasReranker = (rerankerConfig = rerankerConfigService.getActiveConfig(userId)) != null;
+            int candidateSize = hasReranker ? Math.max(topK * 5, 20) : topK;
+            List<KbChunkSearchResult> merged = rrfRanker.merge(
+                    bm25Results, vectorResults, 60, candidateSize, KbChunkSearchResult::getId);
+            log.info("RRF 融合后返回 {} 条（候选池={}）", merged.size(), candidateSize);
+
+            // 精排：Reranker 交叉编码重排序（仅在用户配置了 Reranker 时执行）
+            if (rerankerConfig != null && !merged.isEmpty()) {
+                try {
+                    AesUtil aes2 = new AesUtil(aesSecret);
+                    String rerankerApiKey = aes2.decrypt(rerankerConfig.getApiKey());
+                    // 将候选集文本传给 Reranker，index 对应 merged 列表的下标
+                    List<String> texts = merged.stream().map(KbChunkSearchResult::getContent).toList();
+                    List<RerankerService.RerankResult> reranked = rerankerService.rerank(
+                            query, texts, rerankerConfig.getBaseUrl(), rerankerApiKey,
+                            rerankerConfig.getModel(), topK);
+                    // 按 Reranker 返回的 index 映射回原始候选集，取 topK
+                    final List<KbChunkSearchResult> finalMerged = merged;
+                    merged = reranked.stream()
+                            .filter(r -> r.index() < finalMerged.size())
+                            .limit(topK)
+                            .map(r -> finalMerged.get(r.index()))
+                            .toList();
+                    log.info("Reranker 精排完成: {} 条（从 {} 条候选中精选）", merged.size(), finalMerged.size());
+                } catch (Exception e) {
+                    // 精排失败不阻断检索，降级使用 RRF 结果
+                    log.warn("Reranker 精排失败，降级使用 RRF 结果: {}", e.getMessage());
+                    // 降级时截取 topK
+                    if (merged.size() > topK) {
+                        merged = merged.subList(0, topK);
+                    }
+                }
+            } else {
+                // 无 Reranker 时直接截取 topK
+                if (merged.size() > topK) {
+                    merged = merged.subList(0, topK);
+                }
             }
 
-            AesUtil aes = new AesUtil(aesSecret);
-            String apiKey = aes.decrypt(embedConfig.getApiKey());
-            // 用户提示词的向量
-            EmbeddingService.EmbeddingResult result = embeddingService.embedBatch(
-                    List.of(query), embedConfig.getBaseUrl(), apiKey,
-                    kb.getEmbeddingModel(), kb.getEmbeddingDimensions());
-            float[] queryVector = result.vectors().get(0);
+            return merged;
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
 
-            // 记录 Embedding 使用情况
-            embeddingUsageService.recordUsage(userId, embedConfig.getId(), result.promptTokens());
-
-            // 向量转字符串，用于数据库查询
-            String vectorStr = EmbeddingService.vectorToString(queryVector);
-            // 向量检索
-            return chunkMapper.searchByVector(kbId, vectorStr, topK);
+    /**
+     * BM25 关键词检索
+     * 对 query 进行 Jieba 分词，拼接 tsquery 执行 PostgreSQL ts_rank 排序
+     */
+    public Mono<List<KbChunkSearchResult>> searchByBm25(UUID kbId, String query, int topK) {
+        return Mono.fromCallable(() -> {
+            String tsQuery = jiebaSegmenter.buildTsQuery(query);
+            if (tsQuery.isBlank()) return List.<KbChunkSearchResult>of();
+            return chunkMapper.searchByBm25(kbId, tsQuery, topK);
         }).subscribeOn(Schedulers.boundedElastic());
     }
 

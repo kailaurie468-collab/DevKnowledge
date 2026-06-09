@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from '@/components/layout/Layout'
 import { ParticleContext } from '@/stores/particleContext'
 import { NotifyProvider } from '@/stores/notify'
@@ -11,6 +11,9 @@ import { SkillsPage } from '@/pages/SkillsPage'
 import { KbPage } from '@/pages/KbPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { AiSettings } from '@/pages/settings/AiSettings'
+import { EmbeddingSettings } from '@/pages/settings/EmbeddingSettings'
+import { StorageSettings } from '@/pages/settings/StorageSettings'
 import { RagMetricsPage } from '@/pages/RagMetricsPage'
 import { WikiPage } from '@/pages/WikiPage'
 
@@ -57,9 +60,16 @@ export default function App() {
             <Route path="/demos" element={<DemoPage />} />
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="/kb" element={<KbPage />} />
-            <Route path="/rag-metrics" element={<RagMetricsPage />} />
             <Route path="/wiki" element={<WikiPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+
+            {/* 设置嵌套路由 */}
+            <Route path="/settings" element={<SettingsPage />}>
+              <Route index element={<Navigate to="ai" replace />} />
+              <Route path="ai" element={<AiSettings />} />
+              <Route path="embedding" element={<EmbeddingSettings />} />
+              <Route path="storage" element={<StorageSettings />} />
+              <Route path="rag-metrics" element={<RagMetricsPage />} />
+            </Route>
           </Route>
         </Routes>
       </BrowserRouter>

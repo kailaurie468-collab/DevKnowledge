@@ -16,7 +16,6 @@ export function KbPage() {
   const [newDesc, setNewDesc] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [embeddingModel, setEmbeddingModel] = useState('text-embedding-3-small')
-  const [embeddingDimensions, setEmbeddingDimensions] = useState<number | undefined>(undefined)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadKbs = useCallback(() => {
@@ -53,15 +52,10 @@ export function KbPage() {
   const handleCreate = async () => {
     if (!newName.trim()) return
     try {
-      if (embeddingModel === 'text-embedding-3-large' && embeddingDimensions !== 1536) {
-        notify('large 模型必须设置 dimensions=1536', 'error')
-        return
-      }
       await kbApi.createKb({
         name: newName,
         description: newDesc || undefined,
         embeddingModel,
-        embeddingDimensions,
       })
       setNewName('')
       setNewDesc('')
@@ -107,6 +101,21 @@ export function KbPage() {
     }
   }
 
+  // 重试文档解析
+  const handleRetry = async (docId: string) => {
+    try {
+      await kbApi.retryDocument(docId)
+      notify('正在重新解析文档...', 'success')
+      // 刷新文档列表
+      if (selectedKb) {
+        kbApi.getDocuments(selectedKb.id).then(setDocuments).catch(console.error)
+      }
+    } catch (err) {
+      notify('重试失败，请稍后再试', 'error')
+      console.error(err)
+    }
+  }
+
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">知识库</h1>
@@ -132,10 +141,7 @@ export function KbPage() {
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Embedding 模型</label>
               <select
                 value={embeddingModel}
-                onChange={e => {
-                  setEmbeddingModel(e.target.value)
-                  if (e.target.value === 'text-embedding-ada-002') setEmbeddingDimensions(undefined)
-                }}
+                onChange={e => setEmbeddingModel(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
               >
                 <option value="text-embedding-3-small">text-embedding-3-small（推荐，成本最低）</option>
@@ -144,26 +150,6 @@ export function KbPage() {
               </select>
             </div>
 
-            {/* 向量维度 */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                向量维度
-                <span className="text-xs text-gray-400 dark:text-gray-500 ml-2">（可选，创建后不可更改）</span>
-              </label>
-              <input
-                type="number"
-                value={embeddingDimensions || ''}
-                onChange={e => setEmbeddingDimensions(e.target.value ? Number(e.target.value) : undefined)}
-                placeholder={embeddingModel === 'text-embedding-3-small' ? '推荐 512，留空=1536' :
-                             embeddingModel === 'text-embedding-3-large' ? '必须填 1536' :
-                             'ada-002 不支持 dimensions'}
-                disabled={embeddingModel === 'text-embedding-ada-002'}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:bg-gray-100 dark:disabled:bg-gray-600 disabled:text-gray-400"
-              />
-              {embeddingModel === 'text-embedding-3-large' && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">large 模型必须设置 dimensions=1536</p>
-              )}
-            </div>
           <div className="flex gap-2">
             <button onClick={handleCreate} className="px-3 py-1.5 bg-primary-600 text-white rounded-md text-sm">创建</button>
             <button onClick={() => setShowCreate(false)} className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-300">← 返回</button>
@@ -253,13 +239,28 @@ export function KbPage() {
                         <span className="text-xs text-gray-400 dark:text-gray-500 ml-2">{doc.chunkCount} chunks</span>
                       )}
                       <span className="text-xs text-gray-400 ml-2">{doc.fileType}</span>
+                      {doc.status === 'error' && doc.errorMessage && (
+                        <p className="text-xs text-red-500 dark:text-red-400 mt-1 truncate max-w-md" title={doc.errorMessage}>
+                          {doc.errorMessage}
+                        </p>
+                      )}
                     </div>
-                    <button
-                      onClick={() => kbApi.deleteDocument(doc.id).then(() => kbApi.getDocuments(selectedKb.id).then(setDocuments))}
-                      className="text-xs text-red-500 hover:underline"
-                    >
-                      删除
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {doc.status === 'error' && (
+                        <button
+                          onClick={() => handleRetry(doc.id)}
+                          className="text-xs text-amber-600 dark:text-amber-400 hover:underline"
+                        >
+                          重试
+                        </button>
+                      )}
+                      <button
+                        onClick={() => kbApi.deleteDocument(doc.id).then(() => kbApi.getDocuments(selectedKb.id).then(setDocuments))}
+                        className="text-xs text-red-500 hover:underline"
+                      >
+                        删除
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -278,7 +279,6 @@ export function KbPage() {
                 {kb.embeddingModel && (
                   <p className="text-xs text-gray-400 mt-1">
                     模型: {kb.embeddingModel}
-                    {kb.embeddingDimensions ? ` | 维度: ${kb.embeddingDimensions}` : ''}
                   </p>
                 )}
               </button>

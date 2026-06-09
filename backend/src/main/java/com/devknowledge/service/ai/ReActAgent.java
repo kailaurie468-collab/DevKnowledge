@@ -144,11 +144,11 @@ public class ReActAgent {
                     }
 
                     // 模型没有调用工具 → 正常结束
-                    if (!hasToolCall.get()) {
-                        sink.tryEmitNext(AiChunk.done());
-                        sink.tryEmitComplete();
-                        return;
-                    }
+//                    if (!hasToolCall.get()) {
+//                        sink.tryEmitNext(AiChunk.done());
+//                        sink.tryEmitComplete();
+//                        return;
+//                    }
 
                     // 达到最大轮数 → 强制结束
                     if (currentRound + 1 >= maxIterations) {
@@ -170,7 +170,6 @@ public class ReActAgent {
                             log.warn("检测到死循环：工具 {} 参数相同", tc.getFunctionName());
                         }
                     }
-
                     if (loopDetected) {
                         sink.tryEmitNext(AiChunk.text("\n\n[检测到重复工具调用，已停止推理]"));
                         sink.tryEmitNext(AiChunk.done());

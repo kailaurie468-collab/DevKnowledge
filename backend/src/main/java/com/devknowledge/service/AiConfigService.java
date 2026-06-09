@@ -158,7 +158,7 @@ public class AiConfigService {
             }
 
             // 设为激活，其他配置取消激活
-            activateConfig(userId, target.getId());
+//            activateConfig(userId, target.getId());
 
             return toResponse(target);
         }).subscribeOn(Schedulers.boundedElastic());

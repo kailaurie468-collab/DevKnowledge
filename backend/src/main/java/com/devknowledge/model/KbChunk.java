@@ -27,4 +27,8 @@ public class KbChunk {
     @TableField(typeHandler = VectorTypeHandler.class)
     private String embedding;
     private Instant createdAt;
+
+    /** Jieba 分词后的空格分隔词项，用于 BM25 tsvector 检索（非持久化字段，由 mapper 自行处理 ::tsvector 转换） */
+    @TableField(exist = false)
+    private String tsv;
 }

@@ -103,7 +103,7 @@ public class DemoService {
             Map<String, AtomicInteger> toolCallCounts = new HashMap<>();
 
             if (req.getKbId() != null) {
-                int topK = req.getTopK() != null ? req.getTopK() : 3;
+                int topK = req.getTopK() != null ? req.getTopK() : 5;
                 ragMetric = new RagMetric();
                 ragMetric.setId(UUID.randomUUID());
                 ragMetric.setUserId(userId);
