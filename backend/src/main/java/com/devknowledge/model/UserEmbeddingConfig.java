@@ -19,6 +19,7 @@ public class UserEmbeddingConfig {
     private String name;
     private String apiKey;
     private String baseUrl;
+    private String modelName;
     private Boolean isActive;
     private Instant createdAt;
     private Instant updatedAt;

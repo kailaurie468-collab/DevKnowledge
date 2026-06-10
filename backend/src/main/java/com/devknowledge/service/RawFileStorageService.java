@@ -46,22 +46,39 @@ public class RawFileStorageService {
 
     /**
      * 删除原始文件目录
+     * 删除后如果父目录（kbId目录）为空，也一并删除
      */
     public void delete(UUID kbId, UUID docId) {
-        Path dir = Path.of(storageBasePath, kbId.toString(), docId.toString());
+        Path docDir = Path.of(storageBasePath, kbId.toString(), docId.toString());
+        Path kbDir = Path.of(storageBasePath, kbId.toString());
         try {
-            if (Files.exists(dir)) {
-                // 递归删除目录下所有文件
-                try (var stream = Files.walk(dir)) {
+            if (Files.exists(docDir)) {
+                // 递归删除 docId 目录下所有文件
+                try (var stream = Files.walk(docDir)) {
                     stream.sorted(Comparator.reverseOrder())
                             .forEach(path -> {
                                 try { Files.deleteIfExists(path); } catch (IOException ignored) {}
                             });
                 }
-                log.info("删除原始文件目录: {}", dir);
+                log.info("删除原始文件目录: {}", docDir);
+
+                // 如果 kbId 目录为空，也删除
+                if (Files.exists(kbDir) && isDirectoryEmpty(kbDir)) {
+                    Files.delete(kbDir);
+                    log.info("删除空的知识库文件目录: {}", kbDir);
+                }
             }
         } catch (IOException e) {
             log.warn("删除原始文件目录失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 检查目录是否为空
+     */
+    private boolean isDirectoryEmpty(Path dir) throws IOException {
+        try (var stream = Files.list(dir)) {
+            return stream.findFirst().isEmpty();
         }
     }
 

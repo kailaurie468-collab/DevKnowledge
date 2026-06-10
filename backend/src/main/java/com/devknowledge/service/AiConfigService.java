@@ -89,7 +89,6 @@ public class AiConfigService {
             List<UserAiConfig> configs = aiConfigMapper.selectList(
                     new LambdaQueryWrapper<UserAiConfig>()
                             .eq(UserAiConfig::getUserId, userId)
-                            .orderByDesc(UserAiConfig::getIsActive)
                             .orderByDesc(UserAiConfig::getUpdatedAt));
             return configs.stream().map(this::toResponse).toList();
         }).subscribeOn(Schedulers.boundedElastic());
@@ -229,13 +228,7 @@ public class AiConfigService {
      */
     private void activateConfig(UUID userId, UUID configId) {
         // 先取消该用户所有激活
-//        UserAiConfig deactivate = new UserAiConfig();
-//        deactivate.setIsActive(false);
-//        aiConfigMapper.update(deactivate,
-//                new LambdaQueryWrapper<UserAiConfig>()
-//                        .eq(UserAiConfig::getUserId, userId)
-//                        .eq(UserAiConfig::getIsActive, true));
-
+        deactivateAll(userId);
         // 再激活目标
         UserAiConfig activate = new UserAiConfig();
         activate.setId(configId);

@@ -9,4 +9,5 @@ public class EmbeddingConfigRequest {
     private String name;
     private String apiKey;
     private String baseUrl;
+    private String modelName;
 }

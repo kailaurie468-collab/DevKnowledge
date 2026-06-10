@@ -143,6 +143,7 @@ export interface KnowledgeBase {
   description?: string
   documentCount?: number
   embeddingModel?: string
+  sortOrder?: number
   createdAt: string
   updatedAt: string
 }
@@ -156,6 +157,7 @@ export interface KbDocument {
   content?: string
   status: 'processing' | 'ready' | 'error' | 'embedding'
   errorMessage?: string
+  warningMessage?: string
   chunkCount?: number
   createdAt: string
 }
@@ -222,6 +224,7 @@ export interface EmbeddingConfig {
   name?: string
   apiKeyMasked: string
   baseUrl: string
+  modelName?: string
   isActive?: boolean
 }
 
@@ -230,6 +233,25 @@ export interface EmbeddingConfigRequest {
   name?: string
   apiKey: string
   baseUrl: string
+  modelName?: string
+}
+
+// Reranker Config
+export interface RerankerConfig {
+  id?: string
+  name?: string
+  apiKeyMasked: string
+  baseUrl: string
+  model: string
+  isActive?: boolean
+}
+
+export interface RerankerConfigRequest {
+  configId?: string
+  name?: string
+  apiKey: string
+  baseUrl: string
+  model: string
 }
 
 // RAG Metrics

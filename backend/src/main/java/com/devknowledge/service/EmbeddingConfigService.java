@@ -47,7 +47,6 @@ public class EmbeddingConfigService {
             List<UserEmbeddingConfig> configs = configMapper.selectList(
                     new LambdaQueryWrapper<UserEmbeddingConfig>()
                             .eq(UserEmbeddingConfig::getUserId, userId)
-                            .orderByDesc(UserEmbeddingConfig::getIsActive)
                             .orderByDesc(UserEmbeddingConfig::getUpdatedAt));
             return configs.stream().map(this::toResponse).toList();
         }).subscribeOn(Schedulers.boundedElastic());
@@ -69,6 +68,7 @@ public class EmbeddingConfigService {
             if (target != null) {
                 target.setName(req.getName());
                 target.setBaseUrl(req.getBaseUrl());
+                target.setModelName(req.getModelName());
                 target.setUpdatedAt(now);
                 if (req.getApiKey() != null && !req.getApiKey().isBlank()) {
                     target.setApiKey(aes.encrypt(req.getApiKey()));
@@ -85,6 +85,7 @@ public class EmbeddingConfigService {
                 target.setName(req.getName() != null ? req.getName() : "OpenAI Embedding");
                 target.setApiKey(aes.encrypt(req.getApiKey()));
                 target.setBaseUrl(req.getBaseUrl() != null ? req.getBaseUrl() : "https://api.openai.com/v1");
+                target.setModelName(req.getModelName() != null ? req.getModelName() : "text-embedding-3-small");
                 target.setIsActive(true);
                 target.setCreatedAt(now);
                 target.setUpdatedAt(now);
@@ -138,9 +139,9 @@ public class EmbeddingConfigService {
             }
             AesUtil aes = new AesUtil(aesSecret);
             String apiKey = aes.decrypt(config.getApiKey());
-            boolean ok = embeddingService.testConnection(config.getBaseUrl(), apiKey);
+            boolean ok = embeddingService.testConnection(config.getBaseUrl(), apiKey, config.getModelName());
             return ok ? new EmbeddingConfigResponse.TestResult(true, "连接成功！")
-                    : new EmbeddingConfigResponse.TestResult(false, "连接失败，请检查 API Key 和 Base URL");
+                    : new EmbeddingConfigResponse.TestResult(false, "连接失败，请检查 API Key、Base URL、Model Name");
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -159,6 +160,9 @@ public class EmbeddingConfigService {
     }
 
     private void activateConfig(UUID userId, UUID configId) {
+        // 先取消所有激活
+        deactivateAll(userId);
+        // 再激活目标配置
         UserEmbeddingConfig activate = new UserEmbeddingConfig();
         activate.setId(configId);
         activate.setIsActive(true);
@@ -171,6 +175,7 @@ public class EmbeddingConfigService {
         resp.setId(config.getId());
         resp.setName(config.getName());
         resp.setBaseUrl(config.getBaseUrl());
+        resp.setModelName(config.getModelName());
         resp.setIsActive(Boolean.TRUE.equals(config.getIsActive()));
         try {
             String plainKey = aes.decrypt(config.getApiKey());

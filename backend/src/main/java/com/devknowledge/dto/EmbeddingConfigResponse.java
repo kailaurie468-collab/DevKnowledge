@@ -10,6 +10,7 @@ public class EmbeddingConfigResponse {
     private String name;
     private String apiKeyMasked;
     private String baseUrl;
+    private String modelName;
     private Boolean isActive;
 
     @Data

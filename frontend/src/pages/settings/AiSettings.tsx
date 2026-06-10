@@ -44,7 +44,7 @@ export function AiSettings() {
     }).catch(console.error)
   }
 
-  const selectConfig = (config: AiConfig) => {
+  const selectConfig = async (config: AiConfig) => {
     setSelectedId(config.id || null)
     setIsNew(false)
     setName(config.name || '')
@@ -55,6 +55,15 @@ export function AiSettings() {
     setMaskedKey(config.apiKeyMasked)
     setApiKey('')
     setTestResult(null)
+    // 点击列表项直接激活该配置
+    if (config.id && !config.isActive) {
+      try {
+        await settingsApi.switchConfig(config.id)
+        loadConfigs()
+      } catch (err) {
+        console.error('切换失败:', err)
+      }
+    }
   }
 
   const handleNew = () => {
@@ -155,28 +164,55 @@ export function AiSettings() {
           <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">我的 AI</h3>
           <div className="space-y-2">
             {configs.map(config => (
-              <button
+              <div
                 key={config.id}
-                onClick={async () => {
-                  selectConfig(config)
-                  if (!config.isActive && config.id) {
-                    await handleActivate(config.id)
-                  }
-                }}
-                className={`w-full text-left p-3 rounded-lg border transition-all ${
+                className={`flex items-center p-3 rounded-lg border transition-all ${
                   selectedId === config.id
                     ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30'
                     : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
                 }`}
               >
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{config.name || config.provider}</span>
-                  {config.isActive && (
-                    <span className="text-xs px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded-full">使用中</span>
-                  )}
-                </div>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{config.model}</p>
-              </button>
+                <button
+                  onClick={async () => {
+                    selectConfig(config)
+                    if (!config.isActive && config.id) {
+                      await handleActivate(config.id)
+                    }
+                  }}
+                  className="flex-1 text-left"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{config.name || config.provider}</span>
+                    {config.isActive && (
+                      <span className="text-xs px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded-full">使用中</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{config.model}</p>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (confirm(`确定删除配置「${config.name || config.provider}」？`)) {
+                      settingsApi.deleteConfig(config.id!).then(() => {
+                        if (selectedId === config.id) {
+                          setSelectedId(null)
+                          setIsNew(true)
+                        }
+                        loadConfigs()
+                        notify('配置已删除', 'success')
+                      }).catch(err => {
+                        notify(err instanceof Error ? err.message : '删除失败', 'error')
+                      })
+                    }
+                  }}
+                  className="ml-2 p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                  title="删除配置"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </div>
             ))}
             <button
               onClick={handleNew}
@@ -290,14 +326,6 @@ export function AiSettings() {
                   className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
                 >
                   设为默认
-                </button>
-              )}
-              {!isNew && configs.length > 1 && (
-                <button
-                  onClick={handleDelete}
-                  className="px-4 py-2 border border-red-200 text-red-600 rounded-md text-sm font-medium hover:bg-red-50 ml-auto"
-                >
-                  删除
                 </button>
               )}
             </div>

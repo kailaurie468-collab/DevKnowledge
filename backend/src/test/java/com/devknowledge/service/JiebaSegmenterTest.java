@@ -111,6 +111,48 @@ class JiebaSegmenterTest {
             assertThat(result).doesNotContain("的");
             assertThat(result).doesNotContain("它");
         }
+
+        @Test
+        @DisplayName("过滤标点符号和特殊字符")
+        void filterPunctuation() {
+            // 模拟 Markdown 文档内容的分词
+            String text = "### 第 2.1 节：使用 `@Component` 注解（Spring Boot）；详见 <官方文档>";
+            String result = segmenter.segment(text);
+            // 纯符号 token 应被过滤
+            assertThat(result).doesNotContain("###");
+            assertThat(result).doesNotContain("(");
+            assertThat(result).doesNotContain(")");
+            assertThat(result).doesNotContain(";");
+            assertThat(result).doesNotContain("；");
+            assertThat(result).doesNotContain("<");
+            assertThat(result).doesNotContain(">");
+            assertThat(result).doesNotContain("`");
+            assertThat(result).doesNotContain("@");
+            // 有意义的词应保留
+            assertThat(result).containsIgnoringCase("Spring");
+            assertThat(result).containsIgnoringCase("Boot");
+            assertThat(result).contains("注解");
+        }
+
+        @Test
+        @DisplayName("过滤纯数字版本号")
+        void filterVersionNumbers() {
+            String result = segmenter.segment("版本 2.1 发布了，需要 Java 17 以上");
+            // "2.1" 纯数字+点号会被 stripPunctuation 处理
+            // 核心词保留
+            assertThat(result).contains("版本");
+            assertThat(result).contains("发布");
+        }
+
+        @Test
+        @DisplayName("保留编程专有名词中的特殊字符")
+        void preserveProgrammingTerms() {
+            String result = segmenter.segment("C++ 和 C# 是常用编程语言");
+            // C++ 和 C# 中的 + 和 # 应被保留（Jieba 可能转为小写）
+            String lower = result.toLowerCase();
+            assertThat(lower).contains("c++");
+            assertThat(lower).contains("c#");
+        }
     }
 
     // ==================== buildTsQuery() tsquery 构建 ====================

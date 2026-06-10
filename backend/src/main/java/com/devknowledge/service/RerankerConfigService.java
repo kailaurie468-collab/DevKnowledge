@@ -50,7 +50,6 @@ public class RerankerConfigService {
             List<UserRerankerConfig> configs = configMapper.selectList(
                     new LambdaQueryWrapper<UserRerankerConfig>()
                             .eq(UserRerankerConfig::getUserId, userId)
-                            .orderByDesc(UserRerankerConfig::getIsActive)
                             .orderByDesc(UserRerankerConfig::getUpdatedAt));
             return configs.stream().map(this::toResponse).toList();
         }).subscribeOn(Schedulers.boundedElastic());
@@ -162,6 +161,9 @@ public class RerankerConfigService {
     }
 
     private void activateConfig(UUID userId, UUID configId) {
+        // 先取消所有激活
+        deactivateAll(userId);
+        // 再激活目标配置
         UserRerankerConfig activate = new UserRerankerConfig();
         activate.setId(configId);
         activate.setIsActive(true);

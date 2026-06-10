@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -17,6 +18,11 @@ public class JiebaSegmenter {
 
     private final com.huaban.analysis.jieba.JiebaSegmenter segmenter
             = new com.huaban.analysis.jieba.JiebaSegmenter();
+
+    /** token 至少含一个中文字符、字母或数字才保留（过滤纯标点/符号） */
+    private static final Pattern HAS_CONTENT = Pattern.compile("[\\p{IsHan}a-zA-Z0-9]");
+    /** 单个中文字符（语义弱，检索噪声大） */
+    private static final Pattern SINGLE_CHAR_CJK = Pattern.compile("^\\p{IsHan}$");
 
     /** 中英文停用词表 */
     private static final Set<String> STOP_WORDS = Set.of(
@@ -51,13 +57,7 @@ public class JiebaSegmenter {
      */
     public String segment(String text) {
         if (text == null || text.isBlank()) return "";
-        // Jieba 分词（SEARCH 模式更适合检索场景）
-        List<SegToken> tokens = segmenter.process(text, SegMode.SEARCH);
-        return tokens.stream()
-                .map(token -> token.word)
-                .filter(word -> word != null && !word.isBlank())
-                .filter(word -> !STOP_WORDS.contains(word.toLowerCase()))
-                .collect(Collectors.joining(" "));
+        return cleanTokens(text).stream().collect(Collectors.joining(" "));
     }
 
     /**
@@ -69,11 +69,61 @@ public class JiebaSegmenter {
      */
     public String buildTsQuery(String text) {
         if (text == null || text.isBlank()) return "";
+        return cleanTokens(text).stream().collect(Collectors.joining(" & "));
+    }
+
+    /**
+     * 公共 token 清洗管道：
+     * 1. Jieba SEARCH 模式分词
+     * 2. 去除前后标点符号
+     * 3. 过滤纯标点/符号 token（要求至少含一个汉字、字母或数字）
+     * 4. 过滤单字中文（语义弱、噪声大，如 "一"、"种"、"个"）
+     * 5. 过滤停用词
+     * 6. 限制 token 长度（防止超长乱码）
+     */
+    private List<String> cleanTokens(String text) {
         List<SegToken> tokens = segmenter.process(text, SegMode.SEARCH);
         return tokens.stream()
                 .map(token -> token.word)
                 .filter(word -> word != null && !word.isBlank())
+                // 去除 token 前后的标点符号（如 Jieba 可能输出 "框架," 或 ".NET"）
+                .map(JiebaSegmenter::stripPunctuation)
+                .filter(word -> !word.isEmpty())
+                // 必须含至少一个汉字、字母或数字（过滤 "###" "(" ";" 等纯符号）
+                .filter(word -> HAS_CONTENT.matcher(word).find())
+                // 过滤单字中文（"一" "种" "个" 等语义弱词）
+                .filter(word -> !SINGLE_CHAR_CJK.matcher(word).matches())
+                // 停用词过滤
                 .filter(word -> !STOP_WORDS.contains(word.toLowerCase()))
-                .collect(Collectors.joining(" & "));
+                // 限制 token 长度，防止超长乱码
+                .filter(word -> word.length() <= 50)
+                .toList();
+    }
+
+    /**
+     * 去除字符串首尾的标点符号和特殊字符
+     * 保留中间的（如 "C++" → "C++", ".NET" → "NET", "v2.1" → "v2.1"）
+     */
+    private static String stripPunctuation(String word) {
+        // 去除开头的标点
+        int start = 0;
+        while (start < word.length() && isPunctuation(word.charAt(start))) {
+            start++;
+        }
+        // 去除结尾的标点
+        int end = word.length();
+        while (end > start && isPunctuation(word.charAt(end - 1))) {
+            end--;
+        }
+        return word.substring(start, end);
+    }
+
+    /**
+     * 判断字符是否为标点或特殊符号
+     */
+    private static boolean isPunctuation(char c) {
+        if (Character.isLetterOrDigit(c)) return false;
+        if (c == '+' || c == '#' || c == '_') return false; // 保留编程常见符号（C++ / C# / snake_case）
+        return true;
     }
 }
