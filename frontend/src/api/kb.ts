@@ -14,6 +14,9 @@ export const kbApi = {
   deleteKb: (id: string) =>
     api.delete<void>(`/kb/${id}`),
 
+  reorderKbs: (orderedIds: string[]) =>
+    api.patch<void>('/kb/reorder', { orderedIds }),
+
   uploadDocument: (kbId: string, file: File) => {
     const formData = new FormData()
     formData.append('file', file)

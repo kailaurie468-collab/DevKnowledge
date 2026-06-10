@@ -27,4 +27,7 @@ public class KnowledgeBase {
     private Instant updatedAt;
     /** Embedding 模型名（创建时锁定） */
     private String embeddingModel;
+
+    /** 排序顺序（用户自定义拖拽排序） */
+    private Integer sortOrder;
 }

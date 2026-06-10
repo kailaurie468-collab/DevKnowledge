@@ -62,6 +62,14 @@ public class KbService {
 
     public Mono<KnowledgeBase> createKb(UUID userId, KbCreateRequest req) {
         return Mono.fromCallable(() -> {
+            // 计算新排序值：当前用户最大 sortOrder + 1
+            KnowledgeBase lastKb = kbMapper.selectOne(
+                    new LambdaQueryWrapper<KnowledgeBase>()
+                            .eq(KnowledgeBase::getUserId, userId)
+                            .orderByDesc(KnowledgeBase::getSortOrder)
+                            .last("LIMIT 1"));
+            int nextOrder = (lastKb != null && lastKb.getSortOrder() != null) ? lastKb.getSortOrder() + 1 : 1;
+
             KnowledgeBase kb = new KnowledgeBase();
             kb.setId(UUID.randomUUID());
             kb.setUserId(userId);
@@ -71,6 +79,7 @@ public class KbService {
             kb.setUpdatedAt(Instant.now());
             kb.setEmbeddingModel(req.getEmbeddingModel() != null
                     ? req.getEmbeddingModel() : "text-embedding-3-small");
+            kb.setSortOrder(nextOrder);
             kbMapper.insert(kb);
             return kb;
         }).subscribeOn(Schedulers.boundedElastic());
@@ -81,7 +90,7 @@ public class KbService {
                 kbMapper.selectList(
                         new LambdaQueryWrapper<KnowledgeBase>()
                                 .eq(KnowledgeBase::getUserId, userId)
-                                .orderByDesc(KnowledgeBase::getCreatedAt))
+                                .orderByAsc(KnowledgeBase::getSortOrder))
         ).subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -99,6 +108,22 @@ public class KbService {
             if (kb == null) throw new RuntimeException("知识库不存在");
             if (!kb.getUserId().equals(userId)) throw new RuntimeException("无权删除");
             kbMapper.deleteById(id);
+            return null;
+        }).subscribeOn(Schedulers.boundedElastic()).then();
+    }
+
+    /**
+     * 批量更新知识库排序
+     * 按传入的 ID 顺序依次设置 sort_order
+     */
+    public Mono<Void> reorderKbs(UUID userId, List<UUID> orderedIds) {
+        return Mono.fromCallable(() -> {
+            for (int i = 0; i < orderedIds.size(); i++) {
+                KnowledgeBase kb = kbMapper.selectById(orderedIds.get(i));
+                if (kb == null || !kb.getUserId().equals(userId)) continue;
+                kb.setSortOrder(i + 1);
+                kbMapper.updateById(kb);
+            }
             return null;
         }).subscribeOn(Schedulers.boundedElastic()).then();
     }
@@ -290,6 +315,16 @@ public class KbService {
         return dot >= 0 ? filename.substring(dot + 1) : "";
     }
 
+    // ==================== Embedding 配置检查 ====================
+
+    /**
+     * 检查用户是否已配置 Embedding AI
+     * 用于 Demo 生成时判断 RAG 检索模式
+     */
+    public boolean hasEmbeddingConfig(UUID userId) {
+        return embeddingConfigService.getActiveConfig(userId) != null;
+    }
+
     // ==================== 向量化 ====================
 
     /**
@@ -305,6 +340,13 @@ public class KbService {
         UserEmbeddingConfig embedConfig = embeddingConfigService.getActiveConfig(kb.getUserId());
         if (embedConfig == null) {
             log.warn("用户未配置 Embedding AI，跳过向量化");
+            // 标记文档为未向量化，设置警告信息
+            KbDocument doc = docMapper.selectById(docId);
+            if (doc != null) {
+                doc.setChunkCount(0);
+                doc.setWarningMessage("未配置 Embedding AI，文档未向量化。配置后可获得更精准的语义检索效果。");
+                docMapper.updateById(doc);
+            }
             return;
         }
         AesUtil aes = new AesUtil(aesSecret);
@@ -317,7 +359,7 @@ public class KbService {
         int totalTokens = 0;
         int chunkIndex = 0;
         List<KbChunk> chunksList = new ArrayList<>();
-        for (List<String> batch : partition(chunks, 20)) {
+        for (List<String> batch : partition(chunks, 5)) {
             EmbeddingService.EmbeddingResult result = embeddingService.embedBatch(
                     batch, embedConfig.getBaseUrl(), apiKey, model, EmbeddingService.VECTOR_DIMENSION);
             totalTokens += result.promptTokens();
@@ -338,9 +380,8 @@ public class KbService {
             }
             chunkMapper.insertBatchWithTsv(chunksList);
             chunksList.clear();
-            if (chunks.size() > 20) {
-                try { Thread.sleep(200); } catch (InterruptedException ignored) {}
-            }
+            // 批间延迟，避免 API 限流
+            try { Thread.sleep(200); } catch (InterruptedException ignored) {}
         }
 
         embeddingUsageService.recordUsage(kb.getUserId(), embedConfig.getId(), totalTokens);

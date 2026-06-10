@@ -73,6 +73,13 @@ class ApiClient {
     return this.request<T>(endpoint, { method: 'DELETE' })
   }
 
+  patch<T>(endpoint: string, body?: unknown) {
+    return this.request<T>(endpoint, {
+      method: 'PATCH',
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  }
+
   async *stream(endpoint: string, body: unknown, signal?: AbortSignal): AsyncGenerator<{ event: string; data: string }> {
     const token = this.getToken()
     const headers: Record<string, string> = {

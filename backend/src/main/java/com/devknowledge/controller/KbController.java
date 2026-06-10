@@ -16,6 +16,7 @@ import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -58,6 +59,23 @@ public class KbController {
             @PathVariable UUID id) {
         UUID userId = extractUserId(authHeader);
         return kbService.deleteKb(id, userId)
+                .then(Mono.just(ResponseEntity.noContent().<Void>build()));
+    }
+
+    /**
+     * 批量更新知识库排序（拖拽排序）
+     */
+    @PatchMapping("/reorder")
+    public Mono<ResponseEntity<Void>> reorderKbs(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody Map<String, List<UUID>> body) {
+        UUID userId = extractUserId(authHeader);
+        if (userId == null) return Mono.just(ResponseEntity.status(401).build());
+        List<UUID> orderedIds = body.get("orderedIds");
+        if (orderedIds == null || orderedIds.isEmpty()) {
+            return Mono.just(ResponseEntity.badRequest().<Void>build());
+        }
+        return kbService.reorderKbs(userId, orderedIds)
                 .then(Mono.just(ResponseEntity.noContent().<Void>build()));
     }
 
