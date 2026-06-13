@@ -1,4 +1,5 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useCallback, useRef } from 'react'
+import { useDemoStore } from '@/stores/demoStore'
 
 export interface SSEChunk {
   event: string
@@ -15,17 +16,11 @@ type GeneratorFn = (signal: AbortSignal) => AsyncGenerator<SSEChunk>
 
 /**
  * SSE 流式 Hook
- * 支持 ReAct 事件类型：thought / tool_call / tool_result / text / done / error
+ * 使用全局 store 保持状态，切换页面后内容不丢失
  */
 export function useSSE() {
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [output, setOutput] = useState('')
-  const [events, setEvents] = useState<SSEChunk[]>([])
+  const { isStreaming, output, events, setIsStreaming, appendOutput, addEvent, reset } = useDemoStore()
   const abortRef = useRef<AbortController | null>(null)
-
-  useEffect(() => {
-    return () => { abortRef.current?.abort() }
-  }, [])
 
   const stream = useCallback(async (
     generatorFn: GeneratorFn,
@@ -34,16 +29,15 @@ export function useSSE() {
     const { onChunk, onDone, onError } = options
     const controller = new AbortController()
     abortRef.current = controller
+    reset()
     setIsStreaming(true)
-    setOutput('')
-    setEvents([])
 
     try {
       for await (const chunk of generatorFn(controller.signal)) {
         if (chunk.event === 'text' || chunk.event === 'message') {
-          setOutput(prev => prev + chunk.data)
+          appendOutput(chunk.data)
         }
-        setEvents(prev => [...prev, chunk])
+        addEvent(chunk)
         onChunk?.(chunk)
       }
       onDone?.()
@@ -58,15 +52,10 @@ export function useSSE() {
         abortRef.current = null
       }
     }
-  }, [])
+  }, [setIsStreaming, reset, appendOutput, addEvent])
 
   const cancel = useCallback(() => {
     abortRef.current?.abort()
-  }, [])
-
-  const reset = useCallback(() => {
-    setOutput('')
-    setEvents([])
   }, [])
 
   return { isStreaming, output, events, stream, cancel, reset }

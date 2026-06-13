@@ -77,34 +77,37 @@ public class DemoService {
      * @return SSE 事件流（包含 thought / tool_call / text / done / error）
      */
     public Flux<ServerSentEvent<String>> generateDemo(UUID userId, GenerateDemoRequest req) {
-        // 用 Flux.defer 延迟执行，确保错误通过 SSE 事件返回而非 HTTP 错误
-        return Flux.defer(() -> {
-            // 1. 加载用户 AI 配置
-            if (userId == null) {
-                return Flux.just(ServerSentEvent.<String>builder()
-                        .data("[ERROR]请先登录并配置 AI 服务商").build());
-            }
+        if (userId == null) {
+            return Flux.just(ServerSentEvent.<String>builder()
+                    .data("[ERROR]请先登录并配置 AI 服务商").build());
+        }
+
+        return Mono.fromCallable(() -> {
             UserAiConfig config = aiConfigService.getActiveConfigEntity(userId);
             if (config == null) {
-                return Flux.just(ServerSentEvent.<String>builder()
-                        .data("[ERROR]请先在设置页配置 AI 服务商").build());
+                throw new RuntimeException("请先在设置页配置 AI 服务商");
             }
-
             AesUtil aes = new AesUtil(aesSecret);
             config.setApiKey(aes.decrypt(config.getApiKey()));
-
-            // 2. 构建系统提示词和工具
-            String systemPrompt = buildSystemPrompt(req);
+            return config;
+        }).subscribeOn(Schedulers.boundedElastic())
+        .flatMapMany(config -> {
+            String systemPromptBase = buildSystemPrompt(req);
             List<AiFunction> tools = new ArrayList<>(toolProvider.getBaseTools());
             Map<String, ToolHandler> handlers = new HashMap<>(toolProvider.getBaseHandlers());
 
-            // RAG 预检索注入 + 指标采集
-            RagMetric ragMetric = null;
             Map<String, AtomicInteger> toolCallCounts = new HashMap<>();
 
             if (req.getKbId() != null) {
+                boolean hasEmbedding = kbService.hasEmbeddingConfig(userId);
+                String ragWarning = null;
+                if (!hasEmbedding) {
+                    ragWarning = "未配置 Embedding AI，当前使用关键词搜索，检索效果可能较差。建议在设置页配置 Embedding 以获得更好的语义检索效果。";
+                    log.warn("用户 {} 使用 RAG 模式但未配置 Embedding AI", userId);
+                }
+
                 int topK = req.getTopK() != null ? req.getTopK() : 5;
-                ragMetric = new RagMetric();
+                RagMetric ragMetric = new RagMetric();
                 ragMetric.setId(UUID.randomUUID());
                 ragMetric.setUserId(userId);
                 ragMetric.setKbId(req.getKbId());
@@ -112,90 +115,126 @@ public class DemoService {
                 ragMetric.setToolCallCount(0);
                 ragMetric.setCreatedAt(Instant.now());
 
-                try {
-                    long startTime = System.currentTimeMillis();
-                    List<KbChunkSearchResult> contextChunks =
-                            kbService.searchKbVector(userId, req.getKbId(), req.getPrompt(), topK).block();
-                    long retrievalMs = System.currentTimeMillis() - startTime;
-                    log.info("RAG预检索文档数量: {}", contextChunks.size());
-                    if (contextChunks != null && !contextChunks.isEmpty()) {
-                        systemPrompt += buildRagContext(contextChunks);
-
-                        // 计算相似度指标
-                        double avgSim = contextChunks.stream().mapToDouble(KbChunkSearchResult::getScore).average().orElse(0);
-                        double maxSim = contextChunks.stream().mapToDouble(KbChunkSearchResult::getScore).max().orElse(0);
-                        double minSim = contextChunks.stream().mapToDouble(KbChunkSearchResult::getScore).min().orElse(0);
-
-                        ragMetric.setRagUsed(true);
-                        ragMetric.setChunkCount(contextChunks.size());
-                        ragMetric.setAvgSimilarity(avgSim);
-                        ragMetric.setMaxSimilarity(maxSim);
-                        ragMetric.setMinSimilarity(minSim);
-                        ragMetric.setRetrievalMs((int) retrievalMs);
-                    } else {
-                        ragMetric.setRagUsed(false);
-                        ragMetric.setRetrievalMs((int) retrievalMs);
-                    }
-                } catch (Exception e) {
-                    log.warn("RAG 预检索失败，继续无 RAG 生成: {}", e.getMessage());
-                    ragMetric.setRagUsed(false);
-                }
-
                 tools.add(toolProvider.getKbTool());
                 handlers.put("search_kb", toolProvider.getKbHandler(userId, req.getKbId()));
-            }
 
-            // 3. 运行 ReAct Agent，收集输出并保存
-            StringBuilder outputCollector = new StringBuilder();
+                long startTime = System.currentTimeMillis();
+                final String finalRagWarning = ragWarning;
 
-            int maxIter = req.getMaxIterations() != null ? req.getMaxIterations() : 5;
-            final RagMetric finalRagMetric = ragMetric;
-            return reactAgent.run(systemPrompt, req.getPrompt(), tools, handlers, config, maxIter, toolCallCounts)
-                    .map(chunk -> {
-                        // 收集文本输出
-                        if (chunk.getType() == AiChunkType.TEXT && chunk.getContent() != null) {
-                            outputCollector.append(chunk.getContent());
-                        }
+                UUID demoId = UUID.randomUUID();
 
-                        String eventType = switch (chunk.getType()) {
-                            case THOUGHT -> "thought";
-                            case TOOL_CALL -> "tool_call";
-                            case TOOL_RESULT -> "tool_result";
-                            case TEXT -> "text";
-                            case DONE -> "done";
-                            case ERROR -> "error";
-                        };
-                        String data = switch (chunk.getType()) {
-                            case TOOL_CALL -> chunk.getFunctionName() + ":" + chunk.getArguments();
-                            case ERROR, TEXT, THOUGHT, TOOL_RESULT -> chunk.getContent();
-                            case DONE -> "[DONE]";
-                        };
-                        return ServerSentEvent.<String>builder()
-                                .event(eventType)
-                                .data(data)
-                                .build();
-                    })
-                    .doOnComplete(() -> {
-                        // 流式输出完成后，保存 Demo 到数据库
-                        String fullOutput = outputCollector.toString();
-                        if (!fullOutput.isEmpty() && userId != null) {
-                            saveDemoSync(userId, req, fullOutput);
-                        }
+                return kbService.searchKbVector(userId, req.getKbId(), req.getPrompt(), topK)
+                        .map(contextChunks -> {
+                            long retrievalMs = System.currentTimeMillis() - startTime;
+                            log.info("RAG预检索文档数量: {}", contextChunks.size());
 
-                        // 保存 RAG 指标
-                        if (finalRagMetric != null && userId != null) {
-                            try {
-                                AtomicInteger kbCount = toolCallCounts.get("search_kb");
-                                finalRagMetric.setToolCallCount(kbCount != null ? kbCount.get() : 0);
-                                ragMetricMapper.insert(finalRagMetric);
-                                log.info("RAG 指标已保存: avgSim={}, retrievalMs={}",
-                                        finalRagMetric.getAvgSimilarity(), finalRagMetric.getRetrievalMs());
-                            } catch (Exception e) {
-                                log.warn("保存 RAG 指标失败: {}", e.getMessage());
+                            String promptWithContext = systemPromptBase;
+                            if (contextChunks != null && !contextChunks.isEmpty()) {
+                                promptWithContext += buildRagContext(contextChunks);
+
+                                double avgSim = contextChunks.stream().mapToDouble(KbChunkSearchResult::getScore).average().orElse(0);
+                                double maxSim = contextChunks.stream().mapToDouble(KbChunkSearchResult::getScore).max().orElse(0);
+                                double minSim = contextChunks.stream().mapToDouble(KbChunkSearchResult::getScore).min().orElse(0);
+
+                                ragMetric.setRagUsed(true);
+                                ragMetric.setChunkCount(contextChunks.size());
+                                ragMetric.setAvgSimilarity(avgSim);
+                                ragMetric.setMaxSimilarity(maxSim);
+                                ragMetric.setMinSimilarity(minSim);
+                                ragMetric.setRetrievalMs((int) retrievalMs);
+                            } else {
+                                ragMetric.setRagUsed(false);
+                                ragMetric.setRetrievalMs((int) retrievalMs);
                             }
+                            ragMetric.setDemoId(demoId);
+                            return new RagContextResult(promptWithContext, ragMetric, finalRagWarning, demoId);
+                        })
+                        .onErrorResume(e -> {
+                            log.error("RAG 预检索失败，继续无 RAG 生成: {}", e.getMessage());
+                            ragMetric.setRagUsed(false);
+                            ragMetric.setDemoId(demoId);
+                            return Mono.just(new RagContextResult(systemPromptBase, ragMetric, finalRagWarning, demoId));
+                        })
+                        .flatMapMany(ragRes -> runAgent(userId, req, config, ragRes.prompt, tools, handlers, toolCallCounts, ragRes.metric, ragRes.warning, ragRes.demoId));
+            } else {
+                UUID demoId = UUID.randomUUID();
+                return runAgent(userId, req, config, systemPromptBase, tools, handlers, toolCallCounts, null, null, demoId);
+            }
+        }).onErrorResume(e -> {
+            String msg = e.getMessage() != null ? e.getMessage() : "生成失败";
+            // 确保错误消息前缀，前端可以正确识别
+            if (!msg.startsWith("[ERROR]")) msg = "[ERROR]" + msg;
+            return Flux.just(errorEvent(msg));
+        });
+    }
+
+    private record RagContextResult(String prompt, RagMetric metric, String warning, UUID demoId) {}
+
+    private Flux<ServerSentEvent<String>> runAgent(UUID userId, GenerateDemoRequest req, UserAiConfig config,
+                                                   String systemPrompt, List<AiFunction> tools, Map<String, ToolHandler> handlers,
+                                                   Map<String, AtomicInteger> toolCallCounts, RagMetric finalRagMetric, String finalRagWarning, UUID demoId) {
+        StringBuilder outputCollector = new StringBuilder();
+        int maxIter = req.getMaxIterations() != null ? req.getMaxIterations() : 5;
+
+        Flux<ServerSentEvent<String>> agentFlux = reactAgent.run(systemPrompt, req.getPrompt(), tools, handlers, config, maxIter, toolCallCounts)
+                .map(chunk -> {
+                    if (chunk.getType() == AiChunkType.TEXT && chunk.getContent() != null) {
+                        outputCollector.append(chunk.getContent());
+                    }
+
+                    String eventType = switch (chunk.getType()) {
+                        case THOUGHT -> "thought";
+                        case TOOL_CALL -> "tool_call";
+                        case TOOL_RESULT -> "tool_result";
+                        case TEXT -> "text";
+                        case DONE -> "done";
+                        case ERROR -> "error";
+                    };
+                    String data = switch (chunk.getType()) {
+                        case TOOL_CALL -> chunk.getFunctionName() + ":" + chunk.getArguments();
+                        case ERROR, TEXT, THOUGHT, TOOL_RESULT -> chunk.getContent();
+                        case DONE -> "[DONE]";
+                    };
+                    return ServerSentEvent.<String>builder()
+                            .event(eventType)
+                            .data(data)
+                            .build();
+                })
+                .doOnCancel(() -> {
+                    String fullOutput = outputCollector.toString();
+                    if (!fullOutput.isEmpty() && userId != null) {
+                        saveDemoSync(userId, req, fullOutput, demoId);
+                        log.info("Demo 已保存（用户取消）");
+                    }
+                })
+                .doOnComplete(() -> {
+                    String fullOutput = outputCollector.toString();
+                    if (!fullOutput.isEmpty() && userId != null) {
+                        saveDemoSync(userId, req, fullOutput, demoId);
+                        log.info("Demo 已保存（正常完成）");
+                    }
+
+                    if (finalRagMetric != null && userId != null) {
+                        try {
+                            AtomicInteger kbCount = toolCallCounts.get("search_kb");
+                            finalRagMetric.setToolCallCount(kbCount != null ? kbCount.get() : 0);
+                            ragMetricMapper.insert(finalRagMetric);
+                            log.info("RAG 指标已保存: avgSim={}, retrievalMs={}",
+                                    finalRagMetric.getAvgSimilarity(), finalRagMetric.getRetrievalMs());
+                        } catch (Exception e) {
+                            log.warn("保存 RAG 指标失败: {}", e.getMessage());
                         }
-                    });
-        }).onErrorResume(e -> Flux.just(errorEvent(e.getMessage())));
+                    }
+                });
+
+        if (finalRagWarning != null) {
+            ServerSentEvent<String> warnEvent = ServerSentEvent.<String>builder()
+                    .event("warning")
+                    .data(finalRagWarning)
+                    .build();
+            return Flux.just(warnEvent).concatWith(agentFlux);
+        }
+        return agentFlux;
     }
 
     /** 构建 SSE error 事件 */
@@ -207,22 +246,22 @@ public class DemoService {
     }
 
     /**
-     * 同步保存 Demo（在 doOnComplete 回调中调用）
-     * 只存储代码部分和关键词标签，不存储完整解释文本，减少存储压力
+     * 同步保存 Demo（在 doOnComplete/doOnCancel 回调中调用）
+     * 代码块和解释分开存储，便于历史记录展示
      */
-    private void saveDemoSync(UUID userId, GenerateDemoRequest req, String output) {
+    private void saveDemoSync(UUID userId, GenerateDemoRequest req, String output, UUID demoId) {
         try {
-            String codeContent = extractCodeBlocks(output);
             String title = generateTitle(req.getPrompt());
 
             Demo demo = new Demo();
-            demo.setId(UUID.randomUUID());
+            demo.setId(demoId);
             demo.setUserId(userId);
             demo.setTitle(title);
             demo.setPrompt(req.getPrompt());
             demo.setFrameworkId(req.getFrameworkId());
-            demo.setCodeContent(codeContent.isEmpty() ? output.substring(0, Math.min(output.length(), 500)) : codeContent);
-            demo.setExplanation("");
+            demo.setCodeContent("");
+            // 完整输出作为解释保存，保留原有的 Markdown 格式（多段代码和文本交织）
+            demo.setExplanation(output);
             demo.setLanguage(req.getLanguage() != null ? req.getLanguage() : "typescript");
 
             // 用 Jieba TF-IDF 从 prompt + title 提取关键词
@@ -238,25 +277,7 @@ public class DemoService {
         }
     }
 
-    /**
-     * 从 AI 输出中提取代码块
-     */
-    private String extractCodeBlocks(String output) {
-        StringBuilder code = new StringBuilder();
-        int start = 0;
-        while (true) {
-            int begin = output.indexOf("```", start);
-            if (begin == -1) break;
-            int end = output.indexOf("```", begin + 3);
-            if (end == -1) {
-                code.append(output.substring(begin + 3)).append("\n");
-                break;
-            }
-            code.append(output, begin + 3, end).append("\n");
-            start = end + 3;
-        }
-        return code.toString().trim();
-    }
+    // 已移除 extractCodeBlocks 和 extractExplanation
 
     /** 中文停用词（高频无意义词汇） */
     private static final Set<String> STOP_WORDS = Set.of(
@@ -387,24 +408,11 @@ public class DemoService {
         }
 
         prompt.append("\n重要规则：\n");
-        prompt.append("- 如果用户的问题涉及特定框架，先用 search_links 搜索官方文档\n");
-        prompt.append("- 如果不确定框架的用法，先用 get_framework_info 获取框架信息\n");
-        prompt.append("- 基于搜索到的文档和最佳实践生成代码\n");
+        prompt.append("- 直接基于你的知识生成代码，不要调用任何工具\n");
         prompt.append("- 代码要完整可运行，包含必要的 import\n");
         prompt.append("- 每个语句独占一行，不要把多个语句写在同一行\n");
         prompt.append("- 代码用 ```language 包裹，language 替换为实际语言\n");
         prompt.append("- 解释要简洁，不要重复代码内容\n");
-
-        prompt.append("\n工具使用规则：\n");
-        prompt.append("- 你有以下工具可用：search_links（搜索框架文档链接）、get_framework_info（获取框架信息）\n");
-        prompt.append("- 优先用工具获取准确信息，不要凭记忆编造文档链接\n");
-        prompt.append("- 拿到足够信息后立即给出完整回答，不要重复调用相同工具\n");
-        prompt.append("- 如果工具返回空结果，直接基于已有知识回答\n");
-
-        prompt.append("\n推理控制规则：\n");
-        prompt.append("- 当你已收集到足够信息来回答用户问题时，直接输出完整回答，不要再调用工具\n");
-        prompt.append("- 如果连续两次工具调用都没有获取到有用信息，请基于已有知识直接回答\n");
-        prompt.append("- 不要重复调用相同的工具或搜索相同的关键词\n");
 
         return prompt.toString();
     }

@@ -2,6 +2,7 @@ import { useState, useEffect, type ReactNode } from 'react'
 import { demosApi } from '@/api/demos'
 import { kbApi } from '@/api/kb'
 import { settingsApi } from '@/api/settings'
+import { embeddingApi } from '@/api/embedding'
 import { useSSE } from '@/hooks/useSSE'
 import { useAuthStore } from '@/stores/authStore'
 import { useNotify } from '@/stores/notify'
@@ -52,16 +53,16 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
     setTimeout(() => setCopied(false), 1500)
   }
   return (
-    <div className="relative group">
+    <div className="relative group rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
       {lang && (
-        <div className="flex items-center justify-between px-4 py-1.5 bg-gray-800 text-xs text-gray-400 font-mono">
+        <div className="flex items-center justify-between px-4 py-1.5 bg-gray-100 dark:bg-gray-800 text-xs text-gray-500 dark:text-gray-400 font-mono border-b border-gray-200 dark:border-gray-700">
           <span>{lang}</span>
-          <button onClick={handleCopy} className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-white">
+          <button onClick={handleCopy} className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
             {copied ? '已复制' : '复制'}
           </button>
         </div>
       )}
-      <pre className="p-4 bg-gray-900 text-gray-100 text-sm font-mono leading-relaxed overflow-auto whitespace-pre max-h-80">
+      <pre className="p-4 bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200 text-sm font-mono leading-relaxed overflow-auto whitespace-pre-wrap break-words">
         {code}
       </pre>
     </div>
@@ -122,6 +123,7 @@ export function DemoPage() {
   const [topK, setTopK] = useState(3)
   const [retrievalSource, setRetrievalSource] = useState<'rag' | 'wiki' | 'none'>('none')
   const [ragChunkCounts, setRagChunkCounts] = useState<Record<string, number>>({})
+  const [hasEmbeddingConfig, setHasEmbeddingConfig] = useState(true)
   const { isStreaming, output, events, stream, reset } = useSSE()
 
   const fetchDemos = (page = 1, keyword = demoKeyword) => {
@@ -146,6 +148,9 @@ export function DemoPage() {
     if (isAuthenticated) {
       fetchDemos(1)
       kbApi.getKbs().then(setKbs).catch(console.error)
+      embeddingApi.getAllConfigs().then(list => {
+        setHasEmbeddingConfig(list.length > 0)
+      }).catch(() => {})
     }
   }, [isAuthenticated])
 
@@ -167,6 +172,9 @@ export function DemoPage() {
         onChunk: (chunk) => {
           if (chunk.event === 'error' || chunk.data.startsWith('[ERROR]')) {
             notify(chunk.data.replace('[ERROR]', ''), 'error')
+          }
+          if (chunk.event === 'warning') {
+            notify(chunk.data, 'warning')
           }
         },
         onDone: () => {
@@ -260,37 +268,51 @@ export function DemoPage() {
 
           {/* RAG 配置区 */}
           {retrievalSource === 'rag' && (
-            <div className="flex items-center gap-4">
-              <div className="flex-1">
-                <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">知识库</label>
-                <CustomSelect
-                  value={selectedKbId}
-                  onChange={setSelectedKbId}
-                  placeholder={kbs.length > 0 ? '选择知识库...' : '暂无知识库'}
-                  disabled={kbs.length === 0}
-                  options={kbs.map(kb => ({ value: kb.id, label: kb.name }))}
-                />
-              </div>
-
-              {selectedKbId && (
-                <div className="w-48">
-                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
-                    检索数量 <span className="font-medium text-gray-700 dark:text-gray-300">{topK}</span>
-                  </label>
-                  <input
-                    type="range"
-                    min={1}
-                    max={10}
-                    value={topK}
-                    onChange={e => setTopK(Number(e.target.value))}
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
-                  />
+            <div className="space-y-2">
+              {/* Embedding 未配置警告 */}
+              {!hasEmbeddingConfig && (
+                <div className="flex items-start gap-2 p-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-xs">
+                  <svg className="w-3.5 h-3.5 text-amber-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                  <span className="text-amber-700 dark:text-amber-300">
+                    未配置 Embedding AI，当前使用关键词搜索，检索效果可能较差。建议在设置页配置 Embedding 以获得更好的语义检索效果。
+                  </span>
                 </div>
               )}
 
-              {retrievalSource === 'rag' && !selectedKbId && (
-                <span className="text-xs text-amber-600">请选择知识库</span>
-              )}
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">知识库</label>
+                  <CustomSelect
+                    value={selectedKbId}
+                    onChange={setSelectedKbId}
+                    placeholder={kbs.length > 0 ? '选择知识库...' : '暂无知识库'}
+                    disabled={kbs.length === 0}
+                    options={kbs.map(kb => ({ value: kb.id, label: kb.name }))}
+                  />
+                </div>
+
+                {selectedKbId && (
+                  <div className="w-48">
+                    <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                      检索数量 <span className="font-medium text-gray-700 dark:text-gray-300">{topK}</span>
+                    </label>
+                    <input
+                      type="range"
+                      min={1}
+                      max={10}
+                      value={topK}
+                      onChange={e => setTopK(Number(e.target.value))}
+                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
+                    />
+                  </div>
+                )}
+
+                {retrievalSource === 'rag' && !selectedKbId && (
+                  <span className="text-xs text-amber-600">请选择知识库</span>
+                )}
+              </div>
             </div>
           )}
 
@@ -335,18 +357,35 @@ export function DemoPage() {
       {(output || selectedDemo) && (
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm font-medium text-gray-500 dark:text-gray-400">输出</h2>
-            <button
-              onClick={() => {
-                setSelectedDemo(null)
-                if (!selectedDemo) reset()
-              }}
-              className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-            >
-              × 关闭
-            </button>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-medium text-gray-500 dark:text-gray-400">输出</h2>
+              {isStreaming && !selectedDemo && (
+                <span className="flex items-center gap-1 text-xs text-primary-500">
+                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  生成中...
+                </span>
+              )}
+              {!isStreaming && !selectedDemo && output && (
+                <span className="text-xs text-green-500">✓ 已完成</span>
+              )}
+            </div>
+            {/* 流式中隐藏关闭按钮，完成后或查看历史时显示 */}
+            {(selectedDemo || !isStreaming) && (
+              <button
+                onClick={() => {
+                  setSelectedDemo(null)
+                  if (!selectedDemo) reset()
+                }}
+                className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+              >
+                × 关闭
+              </button>
+            )}
           </div>
-          <MarkdownOutput content={selectedDemo ? '```' + selectedDemo.language + '\n' + selectedDemo.codeContent + '\n```\n\n---\n\n' + selectedDemo.explanation : output} />
+          <MarkdownOutput content={selectedDemo ? [selectedDemo.explanation, selectedDemo.codeContent ? '```' + selectedDemo.language + '\n' + selectedDemo.codeContent + '\n```' : ''].filter(Boolean).join('\n\n---\n\n') : output} />
         </div>
       )}
 

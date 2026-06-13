@@ -81,19 +81,17 @@ public class DemoToolProvider {
 
     /**
      * 构建基础工具列表（始终包含）
+     * 已移除 search_links 和 get_framework_info，Demo 生成不需要这些工具
      */
     public List<AiFunction> getBaseTools() {
-        return List.of(SEARCH_LINKS, GET_FRAMEWORK_INFO);
+        return List.of();
     }
 
     /**
      * 构建基础工具处理器
      */
     public Map<String, ToolHandler> getBaseHandlers() {
-        Map<String, ToolHandler> handlers = new HashMap<>();
-        handlers.put("search_links", buildSearchLinksHandler());
-        handlers.put("get_framework_info", buildGetFrameworkInfoHandler());
-        return handlers;
+        return new HashMap<>();
     }
 
     /**

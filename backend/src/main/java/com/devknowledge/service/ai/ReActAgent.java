@@ -10,7 +10,6 @@ import reactor.core.publisher.Sinks;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.regex.Pattern;
 
 /**
  * ReAct (Reasoning + Acting) Agent 引擎
@@ -22,11 +21,6 @@ public class ReActAgent {
     private static final Logger log = LoggerFactory.getLogger(ReActAgent.class);
     private static final int DEFAULT_MAX_ITERATIONS = 5;
     private static final int ABSOLUTE_MAX_ITERATIONS = 8;
-    /** 完成信号关键词正则 */
-    private static final Pattern COMPLETION_PATTERN = Pattern.compile(
-            "以下是最终答案|最终回答|总结如下|以下是完整的|以上就是|综上所述|代码如下");
-    /** 完成信号最小文本长度 */
-    private static final int MIN_COMPLETION_TEXT_LENGTH = 100;
 
     private final AiProviderFactory aiProviderFactory;
 
@@ -102,6 +96,8 @@ public class ReActAgent {
         AtomicBoolean hasToolCall = new AtomicBoolean(false);
         AtomicInteger textOutputLength = new AtomicInteger(0);
         List<AiChunk> toolCallChunks = Collections.synchronizedList(new ArrayList<>());
+        // 收集本轮文本输出，结束后加到 messages，让模型知道自己说了什么
+        StringBuilder roundTextCollector = new StringBuilder();
 
         adapter.streamWithTools(systemPrompt, messages, tools, config)
                 .doOnNext(chunk -> {
@@ -113,6 +109,7 @@ public class ReActAgent {
                         // 追踪文本输出总长度
                         if (chunk.getContent() != null) {
                             textOutputLength.addAndGet(chunk.getContent().length());
+                            roundTextCollector.append(chunk.getContent());
                         }
                         sink.tryEmitNext(chunk);
                     }
@@ -126,29 +123,14 @@ public class ReActAgent {
                 .doOnComplete(() -> {
                     log.info("ReAct 第 {} 轮完成，hasToolCall={}，textLength={}", currentRound + 1, hasToolCall.get(), textOutputLength.get());
 
-                    // 完成信号检测：后半程 + 无工具调用 + 足够文本 + 包含完成关键词
-                    if (!hasToolCall.get()
-                            && currentRound + 1 >= maxIterations / 2
-                            && textOutputLength.get() >= MIN_COMPLETION_TEXT_LENGTH) {
-                        // 检查本轮文本是否包含完成信号
-                        String roundText = messages.stream()
-                                .filter(m -> "assistant".equals(m.role()))
-                                .map(AiProviderAdapter.ChatMessage::content)
-                                .reduce("", (a, b) -> a + " " + b);
-                        if (COMPLETION_PATTERN.matcher(roundText).find()) {
-                            log.info("检测到完成信号关键词，结束推理");
-                            sink.tryEmitNext(AiChunk.done());
-                            sink.tryEmitComplete();
-                            return;
-                        }
+                    // 模型没有调用工具 → 认为已完成回答，正常结束
+                    // ReAct 模式的核心设计——没有工具调用就意味着模型认为已有足够信息直接回答。
+                    if (!hasToolCall.get()) {
+                        log.info("本轮无工具调用，结束推理");
+                        sink.tryEmitNext(AiChunk.done());
+                        sink.tryEmitComplete();
+                        return;
                     }
-
-                    // 模型没有调用工具 → 正常结束
-//                    if (!hasToolCall.get()) {
-//                        sink.tryEmitNext(AiChunk.done());
-//                        sink.tryEmitComplete();
-//                        return;
-//                    }
 
                     // 达到最大轮数 → 强制结束
                     if (currentRound + 1 >= maxIterations) {
@@ -158,12 +140,13 @@ public class ReActAgent {
                         return;
                     }
 
-                    // 死循环检测：本轮所有工具调用的签名
+                    // 死循环检测：本轮所有工具调用的签名（参数排序后归一化，避免 "a b" vs "b a" 被认为不同）
                     List<String> currentSignatures = new ArrayList<>();
                     boolean loopDetected = false;
 
                     for (AiChunk tc : toolCallChunks) {
-                        String sig = tc.getFunctionName() + ":" + tc.getArguments();
+                        String normalizedArgs = normalizeArgs(tc.getArguments());
+                        String sig = tc.getFunctionName() + ":" + normalizedArgs;
                         currentSignatures.add(sig);
                         if (lastRoundSignatures.contains(sig)) {
                             loopDetected = true;
@@ -177,8 +160,19 @@ public class ReActAgent {
                         return;
                     }
 
+                    // 把本轮文本输出加到 messages，让模型下一轮知道自己说了什么
+                    String roundText = roundTextCollector.toString().trim();
+                    if (!roundText.isEmpty()) {
+                        messages.add(new AiProviderAdapter.ChatMessage("assistant", roundText));
+                    }
+
                     // 执行工具并检查结果
                     boolean allFailed = true;
+
+                    // 没有工具调用时不算失败（模型直接生成了文本）
+                    if (toolCallChunks.isEmpty()) {
+                        allFailed = false;
+                    }
 
                     for (AiChunk tc : toolCallChunks) {
                         ToolResult result = executeTool(tc, handlers, messages, sink, toolCallCounts);
@@ -221,6 +215,26 @@ public class ReActAgent {
     private record ToolResult(boolean isEmpty, boolean isError) {}
 
     /**
+     * 归一化工具参数：提取 JSON 中的值，排序后拼接
+     * 用于死循环检测，避免 "android viewmodel" vs "viewmodel android" 被认为不同
+     */
+    private String normalizeArgs(String args) {
+        if (args == null || args.isBlank()) return "";
+        try {
+            // 简单提取所有值并排序
+            java.util.List<String> values = new java.util.ArrayList<>();
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"([^\"]+)\"").matcher(args);
+            while (m.find()) {
+                values.add(m.group(1).toLowerCase().trim());
+            }
+            java.util.Collections.sort(values);
+            return String.join(" ", values);
+        } catch (Exception e) {
+            return args.toLowerCase().trim();
+        }
+    }
+
+    /**
      * 执行工具调用，将结果注入对话历史
      */
     private ToolResult executeTool(AiChunk toolCall, Map<String, ToolHandler> handlers,
@@ -229,7 +243,13 @@ public class ReActAgent {
                                     Map<String, AtomicInteger> toolCallCounts) {
         String fnName = toolCall.getFunctionName();
         String fnArgs = toolCall.getArguments();
+        String reasoningContent = toolCall.getReasoningContent();
         log.info("执行工具: {}({})", fnName, fnArgs);
+
+        // fnName 为 null 说明 AI 返回了畸形的 tool_call，直接抛异常终止推理
+        if (fnName == null || fnName.isBlank()) {
+            throw new IllegalStateException("AI 返回了无效的工具调用（function name 为 null），终止推理");
+        }
 
         ToolHandler handler = handlers.get(fnName);
         if (handler == null) {
@@ -251,8 +271,9 @@ public class ReActAgent {
 
             boolean isEmpty = result == null || result.isBlank();
 
-            messages.add(new AiProviderAdapter.ChatMessage("assistant",
-                    "我调用了工具 " + fnName + " 来搜索信息。"));
+            // 保留 reasoning_content 到下一轮，模型建议多轮对话中传递以获得最佳表现
+            String assistantContent = "我调用了工具 " + fnName + " 来搜索信息。";
+            messages.add(new AiProviderAdapter.ChatMessage("assistant", assistantContent, null, reasoningContent));
             messages.add(new AiProviderAdapter.ChatMessage("user",
                     "工具 " + fnName + " 的返回结果:\n" + result + "\n请基于以上信息继续回答。"));
 

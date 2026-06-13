@@ -74,6 +74,10 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
             if (msg.name() != null) {
                 msgMap.put("name", msg.name());
             }
+            // 保留 reasoning_content，模型建议在多轮对话中传递以获得最佳表现
+            if (msg.reasoningContent() != null && !msg.reasoningContent().isEmpty()) {
+                msgMap.put("reasoning_content", msg.reasoningContent());
+            }
             msgList.add(msgMap);
         }
 
@@ -108,19 +112,21 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
          * }
          */
         List<Map<String, Object>> toolList = new ArrayList<>();
-        for (AiFunction fn : tools) {
-            Map<String, Object> tool = new LinkedHashMap<>();
-            tool.put("type", "function");
-            Map<String, Object> function = new LinkedHashMap<>();
-            function.put("name", fn.name());
-            function.put("description", fn.description()); // 何时调用tool
-            try {
-                function.put("parameters", objectMapper.readTree(fn.parametersJson()));
-            } catch (JsonProcessingException e) {
-                function.put("parameters", Map.of("type", "object", "properties", Map.of()));
+        if (tools != null) {
+            for (AiFunction fn : tools) {
+                Map<String, Object> tool = new LinkedHashMap<>();
+                tool.put("type", "function");
+                Map<String, Object> function = new LinkedHashMap<>();
+                function.put("name", fn.name());
+                function.put("description", fn.description());
+                try {
+                    function.put("parameters", objectMapper.readTree(fn.parametersJson()));
+                } catch (JsonProcessingException e) {
+                    function.put("parameters", Map.of("type", "object", "properties", Map.of()));
+                }
+                tool.put("function", function);
+                toolList.add(tool);
             }
-            tool.put("function", function);
-            toolList.add(tool);
         }
 
         Map<String, Object> body = new LinkedHashMap<>();
@@ -132,94 +138,71 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
 
         log.info("调用 AI (tools): provider={}, model={}, tools={}", config.getProvider(), config.getModel(), tools.size());
 
-        // 先收集所有 chunk，再统一解析
-        // 原因：小米模型的 reasoning_content 和 content 是分开的，需要先看完整输出再决定
-        // 累加器结构：[0]=reasoning, [1]=content, [2..n]=tool call JSONs
+        // 流式处理：文本 chunk 实时发送（打字机效果），工具调用收集完成后统一发送
+        // 使用共享状态收集工具调用和 reasoning
+        Map<String, Object> sharedState = new java.util.concurrent.ConcurrentHashMap<>();
+        sharedState.put("reasoning", new StringBuilder());
+        sharedState.put("toolAcc", new LinkedHashMap<Integer, String[]>());
+
         return postStream(client, body)
                 .doOnNext(chunk -> log.debug("收到 chunk: {}", chunk))
                 .doOnError(e -> log.error("AI 流式调用错误: {}", e.getMessage()))
                 .doOnComplete(() -> log.info("AI 流式调用完成"))
-                .collect(
-                        () -> new Object[]{"", "", new LinkedHashMap<Integer, String[]>()},
-                        (acc, chunk) -> {
-                            String reasoning = (String) acc[0];
-                            String content = (String) acc[1];
-                            @SuppressWarnings("unchecked")
-                            LinkedHashMap<Integer, String[]> toolAcc = (LinkedHashMap<Integer, String[]>) acc[2];
+                .concatMap(chunk -> {
+                    JsonNode delta = extractDelta(chunk);
+                    if (delta == null) return Flux.empty();
 
-                            JsonNode delta = extractDelta(chunk);
-                            if (delta == null) return;
+                    // 累积 reasoning_content
+                    if (delta.has("reasoning_content") && !delta.get("reasoning_content").isNull()) {
+                        String r = delta.get("reasoning_content").asText();
+                        if (!r.isEmpty()) {
+                            ((StringBuilder) sharedState.get("reasoning")).append(r);
+                        }
+                    }
 
-                            // 工具调用：按 index 累积 name + arguments
-                            /*
-                             小米响应：
-                            "message": {
-                                  "role": "assistant",
-                                  "content": null, // 此时通常没有文本内容
-                                  "tool_calls": [
-                                    {
-                                      "id": "call_abc123",
-                                      "type": "function",
-                                      "function": {
-                                        "name": "get_current_weather",
-                                        "arguments": "{\"location\": \"Boston, MA\", \"unit\": \"celsius\"}"
-                                      }
-                                    }
-                                  ]
-                                }
-                            openai可能会拆成多个：
-                            chunk 1:  delta: { tool_calls: [{ index: 0, id: "call_abc", type: "function",
-                                   function: { name: "search_links", arguments: "" } }] }
-                            chunk 2:  delta: { tool_calls: [{ index: 0, function: { arguments: "{\"qu" } }] }
-                            chunk 3:  delta: { tool_calls: [{ index: 0, function: { arguments: "ery\": \"Re" } }] }
-                            chunk 4:  delta: { tool_calls: [{ index: 0, function: { arguments: "act hooks\"}" } }] }
-                            chunk 5:  delta: { content: "我帮你搜索一下..." }   ← 普通文本回复
+                    // 收集工具调用（不实时发送，最后统一发送）
+                    JsonNode toolCalls = delta.get("tool_calls");
+                    if (toolCalls != null && toolCalls.isArray()) {
+                        @SuppressWarnings("unchecked")
+                        LinkedHashMap<Integer, String[]> toolAcc = (LinkedHashMap<Integer, String[]>) sharedState.get("toolAcc");
+                        for (JsonNode tc : toolCalls) {
+                            int index = tc.has("index") ? tc.get("index").asInt() : 0;
+                            JsonNode fnNode = tc.get("function");
+                            if (fnNode == null) continue;
 
-                            chunk1: index=0, name="search", arguments=""     → slot[0]="search", slot[1]=""
-                            chunk2: index=0, arguments="{\"query"            → slot[0]="search", slot[1]="{\"query"
-                            chunk3: index=0, arguments="\":\"hello\"}"       → slot[0]="search", slot[1]="{\"query\":\"hello\"}"
-                             */
-                            JsonNode toolCalls = delta.get("tool_calls");
-                            if (toolCalls != null && toolCalls.isArray()) {
-                                for (JsonNode tc : toolCalls) {
-                                    int index = tc.has("index") ? tc.get("index").asInt() : 0;
-                                    JsonNode fnNode = tc.get("function");
-                                    if (fnNode == null) continue;
-
-                                    String[] slot = toolAcc.computeIfAbsent(index, k -> new String[]{"", ""});
-                                    if (fnNode.has("name") && !fnNode.get("name").asText().isEmpty()) {
-                                        slot[0] = fnNode.get("name").asText();
-                                    }
-                                    if (fnNode.has("arguments") && !fnNode.get("arguments").asText().isEmpty()) {
-                                        slot[1] += fnNode.get("arguments").asText();
-                                    }
-                                }
+                            String[] slot = toolAcc.computeIfAbsent(index, k -> new String[]{"", ""});
+                            if (fnNode.has("name") && !fnNode.get("name").isNull()
+                                    && !fnNode.get("name").asText().isEmpty()) {
+                                slot[0] = fnNode.get("name").asText();
                             }
-
-                            // 累积 reasoning_content（思考过程）
-                            if (delta.has("reasoning_content") && !delta.get("reasoning_content").isNull()) {
-                                String r = delta.get("reasoning_content").asText();
-                                if (!r.isEmpty()) acc[0] = reasoning + r;
+                            if (fnNode.has("arguments") && !fnNode.get("arguments").asText().isEmpty()) {
+                                slot[1] += fnNode.get("arguments").asText();
                             }
+                        }
+                        return Flux.empty();
+                    }
 
-                            // 累积 content（最终回复）
-                            if (delta.has("content") && !delta.get("content").isNull()) {
-                                String c = delta.get("content").asText();
-                                if (!c.isEmpty()) acc[1] = content + c;
-                            }
-                        })
-                .flatMapMany(acc -> {
-                    String reasoning = (String) acc[0];
-                    String content = (String) acc[1];
+                    // 实时发送文本 chunk（打字机效果）
+                    if (delta.has("content") && !delta.get("content").isNull()) {
+                        String c = delta.get("content").asText();
+                        if (!c.isEmpty()) {
+                            return Flux.just(AiChunk.text(c));
+                        }
+                    }
+
+                    return Flux.empty();
+                })
+                // 流结束后，统一发送工具调用
+                .concatWith(Flux.defer(() -> {
+                    String reasoning = ((StringBuilder) sharedState.get("reasoning")).toString();
                     @SuppressWarnings("unchecked")
-                    LinkedHashMap<Integer, String[]> toolAcc = (LinkedHashMap<Integer, String[]>) acc[2];
+                    LinkedHashMap<Integer, String[]> toolAcc = (LinkedHashMap<Integer, String[]>) sharedState.get("toolAcc");
 
-                    log.info("AI 输出 - reasoning长度: {}, content长度: {}, toolCall数量: {}",
-                            reasoning.length(), content.length(), toolAcc.size());
+                    log.info("AI 输出 - reasoning长度: {}, toolCall数量: {}", reasoning.length(), toolAcc.size());
 
                     List<AiChunk> result = new ArrayList<>();
 
-                    // 按 index 顺序输出所有工具调用
+                    // 发送所有工具调用
                     for (Map.Entry<Integer, String[]> entry : toolAcc.entrySet()) {
                         String fnName = entry.getValue()[0];
                         String fnArgs = entry.getValue()[1];
@@ -229,19 +212,11 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
                         }
                         if (fnArgs.isEmpty()) fnArgs = "{}";
                         log.info("AI 请求调用工具 [{}]: {}({})", entry.getKey(), fnName, fnArgs);
-                        result.add(AiChunk.toolCall(fnName, fnArgs));
-                    }
-
-                    // 只输出 content（模型的实际回复），不输出 reasoning
-                    if (!content.isEmpty()) {
-                        result.add(AiChunk.text(content));
-                    } else if (result.isEmpty()) {
-                        log.warn("AI 未产生 content 输出，reasoning: {}", reasoning.substring(0, Math.min(reasoning.length(), 100)));
-                        result.add(AiChunk.text("[AI 未产生输出，请重试]"));
+                        result.add(AiChunk.toolCall(fnName, fnArgs, reasoning));
                     }
 
                     return Flux.fromIterable(result);
-                });
+                }));
     }
 
     // ==================== 内部方法 ====================
