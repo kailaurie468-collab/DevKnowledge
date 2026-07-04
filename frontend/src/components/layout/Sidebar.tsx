@@ -14,6 +14,7 @@ const links = [
 const settingsChildren = [
   { to: '/settings/ai', label: 'AI 服务配置' },
   { to: '/settings/embedding', label: 'Embedding AI' },
+  { to: '/settings/reranker', label: 'Reranker AI' },
   { to: '/settings/storage', label: '数据存储' },
   { to: '/settings/rag-metrics', label: 'RAG 指标' },
 ]
@@ -85,7 +86,7 @@ export function Sidebar() {
 
         {/* 子菜单 */}
         <div
-          className={`overflow-hidden transition-all duration-200 ${expanded ? 'max-h-48 opacity-100' : 'max-h-0 opacity-0'}`}
+          className={`overflow-hidden transition-all duration-200 ${expanded ? 'max-h-60 opacity-100' : 'max-h-0 opacity-0'}`}
         >
           <div className="flex flex-col gap-0.5 pl-4">
             {settingsChildren.map(({ to, label }) => (

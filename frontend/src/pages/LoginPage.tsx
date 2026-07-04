@@ -7,6 +7,7 @@ export function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
+  const [remember, setRemember] = useState(false)
   const [isRegister, setIsRegister] = useState(false)
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
@@ -20,7 +21,7 @@ export function LoginPage() {
       if (isRegister) {
         await register(email, password, displayName || undefined)
       } else {
-        await login(email, password)
+        await login(email, password, remember)
       }
       navigate('/')
     } catch (err) {
@@ -69,6 +70,18 @@ export function LoginPage() {
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
           </div>
+
+          {!isRegister && (
+            <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={e => setRemember(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              />
+              记住我
+            </label>
+          )}
 
           <button
             type="submit"

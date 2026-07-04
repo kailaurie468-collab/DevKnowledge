@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 
 interface Notify {
   id: number
-  type: 'error' | 'success' | 'info'
+  type: 'error' | 'success' | 'info' | 'warning'
   message: string
 }
 
@@ -40,6 +40,7 @@ export function NotifyProvider({ children }: { children: ReactNode }) {
             className={`px-4 py-3 rounded-lg shadow-lg text-sm font-medium max-w-sm animate-slide-in ${
               n.type === 'error' ? 'bg-red-600 text-white' :
               n.type === 'success' ? 'bg-green-600 text-white' :
+              n.type === 'warning' ? 'bg-amber-500 text-white' :
               'bg-gray-800 text-white'
             }`}
             style={{ pointerEvents: 'auto' }}

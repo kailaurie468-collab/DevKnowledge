@@ -10,10 +10,12 @@ import { SearchBar } from '@/components/knowledge/SearchBar'
 import type { KnowledgeBase, KbDocument, EmbeddingConfig } from '@/types/api'
 
 /** 可排序的知识库列表项 */
-function SortableKbItem({ kb, onSelect, onDelete }: {
+function SortableKbItem({ kb, selected, onSelect, onDelete, onToggleSelect }: {
   kb: KnowledgeBase
+  selected: boolean
   onSelect: () => void
   onDelete: () => void
+  onToggleSelect: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: kb.id })
   const style = {
@@ -24,7 +26,10 @@ function SortableKbItem({ kb, onSelect, onDelete }: {
 
   return (
     <div ref={setNodeRef} style={style}
-      className="flex items-center p-3 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800">
+      className={`flex items-center p-3 border rounded-lg bg-white dark:bg-gray-800 ${selected ? 'border-primary-400 dark:border-primary-500' : 'border-gray-200 dark:border-gray-700'}`}>
+      {/* 复选框 */}
+      <input type="checkbox" checked={selected} onChange={onToggleSelect}
+        className="mr-3 w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500 cursor-pointer" />
       {/* 拖拽手柄 — 用 div 避免 button 捕获鼠标事件 */}
       <div {...attributes} {...listeners}
         className="mr-3 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0 touch-none">
@@ -42,7 +47,7 @@ function SortableKbItem({ kb, onSelect, onDelete }: {
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">模型: {kb.embeddingModel}</p>
         )}
       </div>
-      <button onClick={onDelete}
+      <button onClick={onDelete} title="删除此知识库"
         className="text-xs text-red-500 hover:underline ml-4 shrink-0">
         删除
       </button>
@@ -64,6 +69,9 @@ export function KbPage() {
   const [embeddingConfigs, setEmbeddingConfigs] = useState<EmbeddingConfig[]>([])
   const [hasEmbeddingConfig, setHasEmbeddingConfig] = useState(false)
   const [selectedEmbedId, setSelectedEmbedId] = useState<string>('')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false)
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Embedding 配置表单
@@ -218,13 +226,51 @@ export function KbPage() {
     }
   }, [selectedKb])
 
-  const handleDelete = async (id: string) => {
+  // 确认删除单个知识库
+  const confirmDelete = async () => {
+    if (!deleteTargetId) return
     try {
-      await kbApi.deleteKb(id)
-      if (selectedKb?.id === id) setSelectedKb(null)
+      await kbApi.deleteKb(deleteTargetId)
+      if (selectedKb?.id === deleteTargetId) setSelectedKb(null)
+      setDeleteTargetId(null)
       loadKbs()
     } catch (err) {
       console.error(err)
+    }
+  }
+
+  // 切换单个选中状态
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // 全选/取消全选
+  const toggleSelectAll = () => {
+    if (selectedIds.size === kbs.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(kbs.map(k => k.id)))
+    }
+  }
+
+  // 批量删除
+  const handleBatchDelete = async () => {
+    const ids = Array.from(selectedIds)
+    try {
+      await Promise.all(ids.map(id => kbApi.deleteKb(id)))
+      if (selectedKb && ids.includes(selectedKb.id)) setSelectedKb(null)
+      setSelectedIds(new Set())
+      setShowBatchDeleteConfirm(false)
+      notify(`已删除 ${ids.length} 个知识库`, 'success')
+      loadKbs()
+    } catch (err) {
+      notify('部分删除失败，请重试', 'error')
+      loadKbs()
     }
   }
 
@@ -551,21 +597,88 @@ export function KbPage() {
           </div>
         </div>
       ) : (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={kbs.map(k => k.id)} strategy={verticalListSortingStrategy}>
-            <div className="space-y-2">
-              {kbs.map(kb => (
-                <SortableKbItem
-                  key={kb.id}
-                  kb={kb}
-                  onSelect={() => setSelectedKb(kb)}
-                  onDelete={() => handleDelete(kb.id)}
-                />
-              ))}
-              {kbs.length === 0 && <p className="text-gray-500 dark:text-gray-400 text-sm">暂无知识库。</p>}
+        <>
+          {/* 批量操作栏 */}
+          {kbs.length > 0 && (
+            <div className="flex items-center justify-between mb-3 px-1">
+              <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+                <input type="checkbox"
+                  checked={selectedIds.size === kbs.length && kbs.length > 0}
+                  onChange={toggleSelectAll}
+                  className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500" />
+                全选 {selectedIds.size > 0 && `(${selectedIds.size})`}
+              </label>
+              {selectedIds.size > 0 && (
+                <button onClick={() => setShowBatchDeleteConfirm(true)}
+                  className="px-3 py-1.5 bg-red-500 text-white rounded-md text-sm font-medium hover:bg-red-600 transition-colors">
+                  删除选中 ({selectedIds.size})
+                </button>
+              )}
             </div>
-          </SortableContext>
-        </DndContext>
+          )}
+
+          {/* 批量删除确认弹窗 */}
+          {showBatchDeleteConfirm && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+              <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-sm mx-4">
+                <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-2">确认批量删除</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                  确定要删除选中的 <span className="font-medium text-red-500">{selectedIds.size}</span> 个知识库吗？此操作不可撤销，知识库内的所有文档和向量数据将被删除。
+                </p>
+                <div className="flex gap-2 justify-end">
+                  <button onClick={() => setShowBatchDeleteConfirm(false)}
+                    className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+                    取消
+                  </button>
+                  <button onClick={handleBatchDelete}
+                    className="px-4 py-2 bg-red-500 text-white rounded-md text-sm font-medium hover:bg-red-600">
+                    确认删除
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 单个删除确认弹窗 */}
+          {deleteTargetId && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+              <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-sm mx-4">
+                <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-2">确认删除</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                  确定要删除知识库「<span className="font-medium text-gray-700 dark:text-gray-300">{kbs.find(k => k.id === deleteTargetId)?.name}</span>」吗？此操作不可撤销，知识库内的所有文档和向量数据将被删除。
+                </p>
+                <div className="flex gap-2 justify-end">
+                  <button onClick={() => setDeleteTargetId(null)}
+                    className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+                    取消
+                  </button>
+                  <button onClick={confirmDelete}
+                    className="px-4 py-2 bg-red-500 text-white rounded-md text-sm font-medium hover:bg-red-600">
+                    确认删除
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={kbs.map(k => k.id)} strategy={verticalListSortingStrategy}>
+              <div className="space-y-2">
+                {kbs.map(kb => (
+                  <SortableKbItem
+                    key={kb.id}
+                    kb={kb}
+                    selected={selectedIds.has(kb.id)}
+                    onSelect={() => setSelectedKb(kb)}
+                    onDelete={() => setDeleteTargetId(kb.id)}
+                    onToggleSelect={() => toggleSelect(kb.id)}
+                  />
+                ))}
+                {kbs.length === 0 && <p className="text-gray-500 dark:text-gray-400 text-sm">暂无知识库。</p>}
+              </div>
+            </SortableContext>
+          </DndContext>
+        </>
       )}
     </div>
   )

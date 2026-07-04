@@ -25,6 +25,9 @@ public class WikiLlmService {
     private final AiConfigService aiConfigService;
     private final ObjectMapper objectMapper;
 
+    @org.springframework.beans.factory.annotation.Value("${jwt.secret}")
+    private String aesSecret;
+
     /**
      * 基础分析：生成文档摘要
      */
@@ -44,7 +47,7 @@ public class WikiLlmService {
     }
 
     /**
-     * 深度分析：提取实体和关系
+     * 深度分析：提取实体和关系（带重试 + JSON 修复）
      */
     public Mono<AnalysisResult> analyzeEntities(UUID userId, String content, String filename) {
         String prompt = """
@@ -83,52 +86,100 @@ public class WikiLlmService {
                 4. 只输出 JSON，不要其他内容
                 """.formatted(filename, truncate(content, 5000));
 
+        // 重试 prompt：要求严格输出纯 JSON
+        String retryPrompt = """
+                上次回复无法解析为 JSON。请严格只输出一个合法的 JSON 对象，不要包含任何其他文本、代码块标记或解释。
+
+                文档名称: %s
+                文档内容:
+                %s
+
+                JSON 格式:
+                {"entities":[{"name":"","type":"concept","description":""}],"relations":[{"source":"","target":"","relation":"related_to","description":"","strength":0.5}],"summary":""}
+                """.formatted(filename, truncate(content, 3000));
+
         return callLlm(userId, prompt)
-                .flatMap(response -> {
-                    try {
-                        String json = extractJson(response);
-                        Map<String, Object> result = objectMapper.readValue(json, new TypeReference<>() {});
+                .flatMap(response -> parseAnalysisResult(response, userId, retryPrompt));
+    }
 
-                        AnalysisResult analysis = new AnalysisResult();
-                        analysis.setSummary((String) result.getOrDefault("summary", ""));
-
-                        // 解析实体
-                        List<Map<String, Object>> entitiesRaw = (List<Map<String, Object>>) result.getOrDefault("entities", List.of());
-                        List<EntityInfo> entities = new ArrayList<>();
-                        for (Map<String, Object> e : entitiesRaw) {
-                            EntityInfo info = new EntityInfo();
-                            info.setName((String) e.get("name"));
-                            info.setType((String) e.getOrDefault("type", "concept"));
-                            info.setDescription((String) e.getOrDefault("description", ""));
-                            entities.add(info);
+    /**
+     * 解析 LLM 分析结果，失败时重试一次
+     */
+    private Mono<AnalysisResult> parseAnalysisResult(String response, UUID userId, String retryPrompt) {
+        try {
+            log.debug("LLM 原始响应长度: {}", response.length());
+            AnalysisResult result = doParseAnalysis(response);
+            return Mono.just(result);
+        } catch (Exception e) {
+            log.warn("首次解析失败 ({}), 用严格 prompt 重试", e.getMessage());
+            // 记录原始响应用于调试
+            log.debug("解析失败的原始响应: {}", response.substring(0, Math.min(response.length(), 500)));
+            return callLlm(userId, retryPrompt)
+                    .map(retryResponse -> {
+                        try {
+                            return doParseAnalysis(retryResponse);
+                        } catch (Exception retryEx) {
+                            log.error("重试解析仍失败: {}", retryEx.getMessage());
+                            AnalysisResult fallback = new AnalysisResult();
+                            fallback.setSummary("分析失败，请重试");
+                            fallback.setEntities(List.of());
+                            fallback.setRelations(List.of());
+                            return fallback;
                         }
-                        analysis.setEntities(entities);
+                    });
+        }
+    }
 
-                        // 解析关系
-                        List<Map<String, Object>> relationsRaw = (List<Map<String, Object>>) result.getOrDefault("relations", List.of());
-                        List<RelationInfo> relations = new ArrayList<>();
-                        for (Map<String, Object> r : relationsRaw) {
-                            RelationInfo info = new RelationInfo();
-                            info.setSource((String) r.get("source"));
-                            info.setTarget((String) r.get("target"));
-                            info.setRelation((String) r.getOrDefault("relation", "related_to"));
-                            info.setDescription((String) r.getOrDefault("description", ""));
-                            info.setStrength(r.get("strength") instanceof Number
-                                    ? ((Number) r.get("strength")).doubleValue() : 0.5);
-                            relations.add(info);
-                        }
-                        analysis.setRelations(relations);
+    /**
+     * 实际解析逻辑：提取 JSON + 修复 + 字段校验
+     */
+    private AnalysisResult doParseAnalysis(String rawResponse) throws Exception {
+        String json = extractJson(rawResponse);
+        json = repairJson(json);
+        Map<String, Object> result = objectMapper.readValue(json, new TypeReference<>() {});
 
-                        return Mono.just(analysis);
-                    } catch (Exception e) {
-                        log.error("解析 LLM 分析结果失败: {}", e.getMessage());
-                        AnalysisResult fallback = new AnalysisResult();
-                        fallback.setSummary("分析失败，请重试");
-                        fallback.setEntities(List.of());
-                        fallback.setRelations(List.of());
-                        return Mono.just(fallback);
-                    }
-                });
+        AnalysisResult analysis = new AnalysisResult();
+        analysis.setSummary((String) result.getOrDefault("summary", ""));
+
+        // 解析实体，跳过无效条目
+        List<Map<String, Object>> entitiesRaw = (List<Map<String, Object>>) result.getOrDefault("entities", List.of());
+        List<EntityInfo> entities = new ArrayList<>();
+        for (Map<String, Object> e : entitiesRaw) {
+            String name = (String) e.get("name");
+            if (name == null || name.isBlank()) continue; // 跳过无名称的实体
+            EntityInfo info = new EntityInfo();
+            info.setName(name);
+            info.setType((String) e.getOrDefault("type", "concept"));
+            info.setDescription((String) e.getOrDefault("description", ""));
+            entities.add(info);
+        }
+        analysis.setEntities(entities);
+
+        // 解析关系，跳过无效条目
+        List<Map<String, Object>> relationsRaw = (List<Map<String, Object>>) result.getOrDefault("relations", List.of());
+        List<RelationInfo> relations = new ArrayList<>();
+        for (Map<String, Object> r : relationsRaw) {
+            String source = (String) r.get("source");
+            String target = (String) r.get("target");
+            if (source == null || source.isBlank() || target == null || target.isBlank()) continue;
+            RelationInfo info = new RelationInfo();
+            info.setSource(source);
+            info.setTarget(target);
+            info.setRelation((String) r.getOrDefault("relation", "related_to"));
+            info.setDescription((String) r.getOrDefault("description", ""));
+            info.setStrength(r.get("strength") instanceof Number
+                    ? ((Number) r.get("strength")).doubleValue() : 0.5);
+            relations.add(info);
+        }
+        analysis.setRelations(relations);
+
+        // 校验：至少要有 1 个实体，否则视为解析失败
+        if (entities.isEmpty()) {
+            throw new IllegalStateException("解析结果无有效实体");
+        }
+
+        log.info("LLM 分析成功: {} 实体, {} 关系", entities.size(), relations.size());
+        return analysis;
     }
 
     /**
@@ -212,6 +263,9 @@ public class WikiLlmService {
             if (config == null) {
                 throw new RuntimeException("请先配置 AI 服务商");
             }
+            // 解密 API Key（数据库中存储的是 AES 加密后的密文）
+            com.devknowledge.security.AesUtil aes = new com.devknowledge.security.AesUtil(aesSecret);
+            config.setApiKey(aes.decrypt(config.getApiKey()));
             return config;
         })
         .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
@@ -230,12 +284,76 @@ public class WikiLlmService {
     }
 
     private String extractJson(String text) {
+        // 优先尝试提取 ```json ... ``` 代码块中的内容
+        int codeBlockStart = text.indexOf("```json");
+        if (codeBlockStart >= 0) {
+            int jsonStart = codeBlockStart + 7; // 跳过 "```json"
+            int codeBlockEnd = text.indexOf("```", jsonStart);
+            if (codeBlockEnd > jsonStart) {
+                String candidate = text.substring(jsonStart, codeBlockEnd).trim();
+                if (candidate.startsWith("{")) {
+                    return candidate;
+                }
+            }
+        }
+
+        // 回退：查找 JSON 对象边界（使用括号匹配而非简单的 lastIndexOf）
         int start = text.indexOf('{');
+        if (start < 0) return text;
+
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = start; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (c == '\\' && inString) {
+                escaped = true;
+                continue;
+            }
+            if (c == '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) continue;
+            if (c == '{') depth++;
+            else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return text.substring(start, i + 1);
+                }
+            }
+        }
+
+        // 兜底：使用 lastIndexOf
         int end = text.lastIndexOf('}');
         if (start >= 0 && end > start) {
             return text.substring(start, end + 1);
         }
         return text;
+    }
+
+    /**
+     * 修复常见 JSON 问题
+     * - 尾部逗号（trailing comma）
+     * - 单引号替换为双引号
+     * - 移除注释
+     */
+    private String repairJson(String json) {
+        if (json == null || json.isBlank()) return json;
+        String repaired = json
+                // 移除单行注释（// ...）
+                .replaceAll("//[^\n]*", "")
+                // 移除多行注释（/* ... */）
+                .replaceAll("/\\*[^*]*\\*+(?:[^/*][^*]*\\*+)*/", "")
+                // 对象/数组尾部逗号：,} → } 和 ,] → ]
+                .replaceAll(",\\s*([}\\]])", "$1")
+                // 单引号字符串替换为双引号（简单场景，不处理转义）
+                .replaceAll("'([^']*?)'", "\"$1\"");
+        return repaired;
     }
 
     // ==================== 内部数据类 ====================

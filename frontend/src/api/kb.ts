@@ -20,7 +20,7 @@ export const kbApi = {
   uploadDocument: (kbId: string, file: File) => {
     const formData = new FormData()
     formData.append('file', file)
-    const token = localStorage.getItem('accessToken')
+    const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken')
     return fetch(`/api/kb/${kbId}/documents`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -34,7 +34,7 @@ export const kbApi = {
   batchUpload: (kbId: string, files: File[]) => {
     const formData = new FormData()
     files.forEach(file => formData.append('files', file))
-    const token = localStorage.getItem('accessToken')
+    const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken')
     return fetch(`/api/kb/${kbId}/documents/batch`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},

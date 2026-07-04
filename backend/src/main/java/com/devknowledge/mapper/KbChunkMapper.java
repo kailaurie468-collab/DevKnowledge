@@ -31,23 +31,25 @@ public interface KbChunkMapper extends BaseMapper<KbChunk> {
 
     /**
      * BM25 关键词检索
-     * 使用 PostgreSQL tsvector + ts_rank 实现全文检索排序
+     * 使用 Java Jieba 预分词 + websearch_to_tsquery + ts_rank_cd
+     * 入库时 Jieba cleanTokens 过滤噪声，查询时 websearch_to_tsquery 默认 OR 语义
+     * ts_rank_cd 使用覆盖密度排名，更接近 BM25 行为
      *
-     * @param kbId   知识库 ID
-     * @param tsQuery Jieba 分词后拼接的 tsquery 表达式（如 "知识 & 图谱"）
-     * @param topK   返回结果数上限
+     * @param kbId  知识库 ID
+     * @param query 原始查询文本（不需要预分词）
+     * @param topK  返回结果数上限
      * @return 按 BM25 相关性排序的 chunk 列表
      */
     @Select("SELECT c.id, c.doc_id as docId, d.filename, c.chunk_index as chunkIndex, c.content, " +
-            "ts_rank(c.tsv, #{tsQuery}::tsquery) as score " +
+            "ts_rank_cd(c.tsv, websearch_to_tsquery('simple', #{query})) as score " +
             "FROM kb_chunks c " +
             "JOIN kb_documents d ON c.doc_id = d.id " +
-            "WHERE c.kb_id = #{kbId} AND c.tsv @@ #{tsQuery}::tsquery " +
-            "ORDER BY ts_rank(c.tsv, #{tsQuery}::tsquery) DESC " +
+            "WHERE c.kb_id = #{kbId} AND c.tsv @@ websearch_to_tsquery('simple', #{query}) " +
+            "ORDER BY ts_rank_cd(c.tsv, websearch_to_tsquery('simple', #{query})) DESC " +
             "LIMIT #{topK}")
     List<KbChunkSearchResult> searchByBm25(
             @Param("kbId") UUID kbId,
-            @Param("tsQuery") String tsQuery,
+            @Param("query") String query,
             @Param("topK") int topK);
 
     /**
@@ -59,6 +61,8 @@ public interface KbChunkMapper extends BaseMapper<KbChunk> {
 
     /**
      * 动态 SQL 生成器：为每个 chunk 生成包含 tsv 列的 INSERT 语句
+     * tsv 由 Java Jieba 预分词（cleanTokens 过滤管道），通过 to_tsvector('simple', tsv) 转换
+     * 入库和查询都用 simple 配置，确保分词一致性
      */
     class InsertBatchProvider {
         public static String provide(@Param("chunks") List<KbChunk> chunks) {
@@ -69,7 +73,7 @@ public interface KbChunkMapper extends BaseMapper<KbChunk> {
                     .mapToObj(i -> String.format(
                             "(#{chunks[%d].id}::uuid, #{chunks[%d].kbId}::uuid, #{chunks[%d].docId}::uuid, " +
                             "#{chunks[%d].chunkIndex}, #{chunks[%d].content}, #{chunks[%d].embedding}::vector, " +
-                            "#{chunks[%d].createdAt}, #{chunks[%d].tsv}::tsvector)",
+                            "#{chunks[%d].createdAt}, to_tsvector('simple', #{chunks[%d].tsv}))",
                             i, i, i, i, i, i, i, i))
                     .collect(Collectors.joining(", "));
             return "INSERT INTO kb_chunks (id, kb_id, doc_id, chunk_index, content, embedding, created_at, tsv) "

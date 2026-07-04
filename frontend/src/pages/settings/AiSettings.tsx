@@ -250,19 +250,6 @@ export function AiSettings() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">服务商</label>
-              <select
-                value={provider}
-                onChange={e => setProvider(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-              >
-                {providers.map(p => (
-                  <option key={p.name} value={p.name}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Key</label>
               {maskedKey && !isNew && <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">当前: {maskedKey}</p>}
               <input

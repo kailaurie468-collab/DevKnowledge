@@ -29,12 +29,31 @@
 cd frontend && npm install    # 安装依赖
 cd frontend && npm run dev    # 启动开发服务器 (port 5173)
 cd frontend && npm run build  # 生产构建
+cd frontend && npm run lint   # 代码检查
 
 # 后端
 cd backend && mvn spring-boot:run           # 启动后端 (port 8080)
 cd backend && mvn compile                   # 编译
 cd backend && mvn dependency:resolve        # 解析依赖
+cd backend && mvn test                      # 运行测试
 ```
+
+**访问地址：**
+- 前端开发服务器：http://localhost:5173
+- 后端 API 服务：http://localhost:8080
+
+**环境要求：**
+- Node.js 18+
+- Java 17+
+- Maven 3.8+
+- PostgreSQL 16（需安装 pgvector 扩展）
+
+**数据库配置：**
+在 `backend/src/main/resources/application.yml` 中配置：
+- `spring.datasource.url` - PostgreSQL 连接地址
+- `spring.datasource.username` - 数据库用户名
+- `spring.datasource.password` - 数据库密码
+- `jwt.secret` - JWT 密钥（Base64 编码）
 
 ## 代码规范
 
@@ -46,7 +65,7 @@ cd backend && mvn dependency:resolve        # 解析依赖
 
 ## 项目结构
 
-项目具体结构请查看 [CODE_MAP.md](CODE_MAP.md) 文件
+当需要定位模块、修改代码或了解某个功能的实现位置时，请先查阅 [CODE_MAP.md](CODE_MAP.md) 快速定位相关文件和模块边界，避免遗漏关联文件。
 
 ## 重要约束
 

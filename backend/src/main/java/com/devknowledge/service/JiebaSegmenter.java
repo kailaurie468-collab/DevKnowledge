@@ -60,6 +60,7 @@ public class JiebaSegmenter {
         return cleanTokens(text).stream().collect(Collectors.joining(" "));
     }
 
+    // TODO: 修改&改为|
     /**
      * 构建 tsquery 表达式：分词后用 & 连接
      * 用于 PostgreSQL 全文检索的 @@ 匹配运算符

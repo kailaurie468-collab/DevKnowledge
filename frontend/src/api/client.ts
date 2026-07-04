@@ -6,7 +6,7 @@ interface RequestConfig extends RequestInit {
 
 class ApiClient {
   private getToken(): string | null {
-    return localStorage.getItem('accessToken')
+    return localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken')
   }
 
   private async request<T>(endpoint: string, config: RequestConfig = {}): Promise<T> {
@@ -33,6 +33,8 @@ class ApiClient {
     if (response.status === 401) {
       localStorage.removeItem('accessToken')
       localStorage.removeItem('refreshToken')
+      sessionStorage.removeItem('accessToken')
+      sessionStorage.removeItem('refreshToken')
       window.location.href = '/login'
       throw new Error('Unauthorized')
     }

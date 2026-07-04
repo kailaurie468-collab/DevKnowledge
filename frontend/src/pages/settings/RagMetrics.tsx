@@ -78,24 +78,49 @@ export function RagMetrics() {
         {chartData.length === 0 ? (
           <p className="text-sm text-gray-400 dark:text-gray-500 py-8 text-center">暂无数据</p>
         ) : (
-          <div className="flex items-end gap-2 h-40">
-            {chartData.map((d, i) => {
-              const height = maxChartValue > 0 ? (d.avg / maxChartValue) * 100 : 0
-              return (
-                <div key={i} className="flex-1 flex flex-col items-center gap-1 group">
-                  <span className="text-xs text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {(d.avg * 100).toFixed(1)}%
-                  </span>
-                  <div className="w-full flex items-end" style={{ height: '120px' }}>
-                    <div
-                      className="w-full bg-green-500 rounded-t transition-all group-hover:bg-green-600"
-                      style={{ height: `${Math.max(height, 2)}%` }}
-                    />
-                  </div>
-                  <span className="text-xs text-gray-500 dark:text-gray-400">{d.date.slice(5)}</span>
-                </div>
-              )
-            })}
+          <div className="relative h-40 mt-4">
+            <svg className="w-full h-full overflow-visible" preserveAspectRatio="none">
+              {/* 绘制折线 */}
+              <polyline
+                fill="none"
+                stroke="#10b981"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                points={chartData.map((d, i) => {
+                  const x = (i / Math.max(chartData.length - 1, 1)) * 100;
+                  const y = maxChartValue > 0 ? 100 - (d.avg / maxChartValue) * 100 : 100;
+                  return `${x}%,${y}%`;
+                }).join(' ')}
+              />
+              {/* 绘制数据点 */}
+              {chartData.map((d, i) => {
+                const x = (i / Math.max(chartData.length - 1, 1)) * 100;
+                const y = maxChartValue > 0 ? 100 - (d.avg / maxChartValue) * 100 : 100;
+                return (
+                  <g key={i} className="group">
+                    <circle cx={`${x}%`} cy={`${y}%`} r="4" fill="#10b981" className="cursor-pointer transition-all group-hover:r-6" />
+                    {/* Tooltip (Hover 时显示) */}
+                    <text
+                      x={`${x}%`}
+                      y={`${y - 15}%`}
+                      textAnchor="middle"
+                      className="text-xs fill-gray-500 dark:fill-gray-400 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+                    >
+                      {(d.avg * 100).toFixed(1)}%
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+            {/* 绘制 X 轴标签 */}
+            <div className="absolute -bottom-6 left-0 right-0 flex justify-between">
+              {chartData.map((d, i) => (
+                <span key={i} className="text-xs text-gray-500 dark:text-gray-400">
+                  {d.date.slice(5)}
+                </span>
+              ))}
+            </div>
           </div>
         )}
       </div>

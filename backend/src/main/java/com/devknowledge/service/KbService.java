@@ -508,13 +508,12 @@ public class KbService {
         return Mono.fromCallable(() -> {
             KnowledgeBase kb = kbMapper.selectById(kbId);
             if (kb == null) return List.<KbChunkSearchResult>of();
-
             // 通道一：BM25 关键词检索（top-20）
-            String tsQuery = jiebaSegmenter.buildTsQuery(query);
-            List<KbChunkSearchResult> bm25Results = tsQuery.isBlank()
+            // 使用 websearch_to_tsquery 接受原始查询，默认 OR 语义，召回率更高
+            List<KbChunkSearchResult> bm25Results = query.isBlank()
                     ? List.of()
-                    : chunkMapper.searchByBm25(kbId, tsQuery, 20);
-            log.info("BM25 召回 {} 条, tsQuery={}", bm25Results.size(), tsQuery);
+                    : chunkMapper.searchByBm25(kbId, query, 20);
+            log.info("BM25 召回 {} 条, query={}", bm25Results.size(), query);
 
             // 通道二：向量检索（top-20）
             List<KbChunkSearchResult> vectorResults;
@@ -582,13 +581,12 @@ public class KbService {
 
     /**
      * BM25 关键词检索
-     * 对 query 进行 Jieba 分词，拼接 tsquery 执行 PostgreSQL ts_rank 排序
+     * 使用 websearch_to_tsquery 接受原始查询，PostgreSQL 统一分词
      */
     public Mono<List<KbChunkSearchResult>> searchByBm25(UUID kbId, String query, int topK) {
         return Mono.fromCallable(() -> {
-            String tsQuery = jiebaSegmenter.buildTsQuery(query);
-            if (tsQuery.isBlank()) return List.<KbChunkSearchResult>of();
-            return chunkMapper.searchByBm25(kbId, tsQuery, topK);
+            if (query == null || query.isBlank()) return List.<KbChunkSearchResult>of();
+            return chunkMapper.searchByBm25(kbId, query, topK);
         }).subscribeOn(Schedulers.boundedElastic());
     }
 

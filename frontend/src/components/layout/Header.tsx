@@ -6,7 +6,7 @@ export function Header() {
   const { user, isAuthenticated, logout } = useAuthStore()
 
   return (
-    <header className="h-14 border-b border-gray-200 bg-white dark:bg-gray-900 dark:border-gray-700 flex items-center justify-between px-4 transition-colors">
+    <header className="h-14 border-b border-gray-200 bg-white/80 dark:bg-gray-900/60 backdrop-blur-md dark:border-gray-700 flex items-center justify-between px-4 transition-colors relative z-20">
       <Link to="/" className="text-lg font-bold text-primary-600 dark:text-primary-400">
         DevKnowledge
       </Link>

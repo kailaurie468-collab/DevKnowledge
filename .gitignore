@@ -6,6 +6,7 @@ node_modules/
 # Build
 frontend/dist/
 backend/target/
+backend/demo-ReAct.html
 build/
 *.tsbuildinfo
 
@@ -53,3 +54,6 @@ api.txt
 
 #日志
 logs/
+
+#测试集
+*/test-data/

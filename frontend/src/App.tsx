@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from '@/components/layout/Layout'
 import { ParticleContext } from '@/stores/particleContext'
 import { NotifyProvider } from '@/stores/notify'
-import Antigravity from '@/components/effects/Antigravity'
 import { HomePage } from '@/pages/HomePage'
 import { KnowledgePage } from '@/pages/KnowledgePage'
 import { DemoPage } from '@/pages/DemoPage'
@@ -13,6 +12,7 @@ import { LoginPage } from '@/pages/LoginPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { AiSettings } from '@/pages/settings/AiSettings'
 import { EmbeddingSettings } from '@/pages/settings/EmbeddingSettings'
+import { RerankerSettings } from '@/pages/settings/RerankerSettings'
 import { StorageSettings } from '@/pages/settings/StorageSettings'
 import { RagMetricsPage } from '@/pages/RagMetricsPage'
 import { WikiPage } from '@/pages/WikiPage'
@@ -23,34 +23,7 @@ export default function App() {
   return (
     <ParticleContext.Provider value={{ visible: particleVisible, setVisible: setParticleVisible }}>
       <NotifyProvider>
-      <div
-        style={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: 0,
-          pointerEvents: 'none',
-          opacity: particleVisible ? 0.3 : 0,
-          transition: 'opacity 0.4s ease',
-        }}
-      >
-        <Antigravity
-          count={200}
-          magnetRadius={4}
-          ringRadius={3}
-          waveSpeed={0.4}
-          waveAmplitude={0.5}
-          particleSize={1.2}
-          lerpSpeed={0.06}
-          color="#cbc4e8"
-          autoAnimate
-          particleVariance={0.8}
-          rotationSpeed={0.15}
-          depthFactor={0.5}
-          pulseSpeed={2}
-          particleShape="capsule"
-          fieldStrength={12}
-        />
-      </div>
+      <div className="app-root">
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
@@ -67,12 +40,14 @@ export default function App() {
               <Route index element={<Navigate to="ai" replace />} />
               <Route path="ai" element={<AiSettings />} />
               <Route path="embedding" element={<EmbeddingSettings />} />
+              <Route path="reranker" element={<RerankerSettings />} />
               <Route path="storage" element={<StorageSettings />} />
               <Route path="rag-metrics" element={<RagMetricsPage />} />
             </Route>
           </Route>
         </Routes>
       </BrowserRouter>
+      </div>
       </NotifyProvider>
     </ParticleContext.Provider>
   )

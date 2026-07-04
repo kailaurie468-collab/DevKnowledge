@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { wikiApi } from '@/api/wiki'
 import { WikiUpload } from '@/components/wiki/WikiUpload'
 import { WikiGraph3D } from '@/components/wiki/WikiGraph3D'
@@ -10,11 +10,13 @@ export function WikiPage() {
   const [pageContent, setPageContent] = useState<string>('')
   const [graphData, setGraphData] = useState<WikiGraphData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [graphLoading, setGraphLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<'content' | 'graph'>('content')
   const [activeCategory, setActiveCategory] = useState<string>('all')
   const [analyzing, setAnalyzing] = useState(false)
   const [lintResult, setLintResult] = useState<WikiLintResult | null>(null)
   const [linting, setLinting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   // 加载页面列表和图谱数据
   useEffect(() => {
@@ -22,26 +24,32 @@ export function WikiPage() {
     loadGraph()
   }, [])
 
-  const loadPages = async () => {
+  const loadPages = useCallback(async () => {
     try {
       setLoading(true)
+      setError(null)
       const data = await wikiApi.getPages()
       setPages(data)
     } catch (err) {
+      const msg = err instanceof Error ? err.message : '加载页面列表失败'
       console.error('加载页面列表失败:', err)
+      setError(msg)
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  const loadGraph = async () => {
+  const loadGraph = useCallback(async () => {
     try {
+      setGraphLoading(true)
       const data = await wikiApi.getGraph()
       setGraphData(data)
     } catch (err) {
       console.error('加载图谱数据失败:', err)
+    } finally {
+      setGraphLoading(false)
     }
-  }
+  }, [])
 
   // 加载页面内容
   const loadPageContent = async (path: string) => {
@@ -49,15 +57,16 @@ export function WikiPage() {
       setSelectedPage(path)
       setPageContent('加载中...')
       const content = await wikiApi.getPage(path)
-      setPageContent(content)
+      setPageContent(content || '（页面内容为空）')
     } catch (err) {
+      const msg = err instanceof Error ? err.message : '加载失败'
       console.error('加载页面内容失败:', err)
-      setPageContent('加载失败')
+      setPageContent(`加载失败: ${msg}`)
     }
   }
 
-  // 上传成功回调
-  const handleUploadSuccess = () => {
+  // 上传成功回调（接收 WikiUploadResponse 参数但仅用于触发刷新）
+  const handleUploadSuccess = (_result?: unknown) => {
     loadPages()
     loadGraph()
   }
@@ -73,6 +82,20 @@ export function WikiPage() {
       console.error('分析失败:', err)
     } finally {
       setAnalyzing(false)
+    }
+  }
+
+  // 删除文档
+  const handleDelete = async (docId: string) => {
+    if (!confirm('确定要删除此文档及相关内容吗？')) return
+    try {
+      await wikiApi.deleteDocument(docId)
+      setSelectedPage(null)
+      setPageContent('')
+      loadPages()
+      loadGraph()
+    } catch (err) {
+      console.error('删除失败:', err)
     }
   }
 
@@ -216,15 +239,21 @@ export function WikiPage() {
               )}
             </button>
 
-            {/* 深度分析按钮 */}
+            {/* 操作按钮 */}
             {selectedDocId && activeTab === 'content' && (
-              <div className="ml-auto pr-4">
+              <div className="ml-auto pr-4 flex items-center gap-2">
                 <button
                   onClick={() => handleAnalyze(selectedDocId)}
                   disabled={analyzing}
                   className="px-3 py-1.5 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 disabled:bg-gray-400 transition-colors"
                 >
-                  {analyzing ? '分析中...' : '🔬 深度分析'}
+                  {analyzing ? '分析中...' : '深度分析'}
+                </button>
+                <button
+                  onClick={() => handleDelete(selectedDocId)}
+                  className="px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                >
+                  删除
                 </button>
               </div>
             )}
@@ -235,6 +264,18 @@ export function WikiPage() {
         <div className="flex-1 overflow-y-auto">
           {activeTab === 'content' ? (
             <div className="p-6">
+              {/* 全局错误提示 */}
+              {error && (
+                <div className="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 flex items-center justify-between">
+                  <span className="text-sm text-red-700 dark:text-red-300">{error}</span>
+                  <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+
               {/* Lint 结果 */}
               {lintResult && (
                 <div className="mb-6 bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
@@ -293,7 +334,17 @@ export function WikiPage() {
             </div>
           ) : (
             // 图谱标签页
-            graphData && graphData.entities.length > 0 ? (
+            graphLoading ? (
+              <div className="flex items-center justify-center h-full text-gray-500 dark:text-gray-400">
+                <div className="text-center">
+                  <svg className="animate-spin w-12 h-12 mx-auto mb-4 text-gray-400" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  <p>加载图谱数据中...</p>
+                </div>
+              </div>
+            ) : graphData && graphData.entities.length > 0 ? (
               <WikiGraph3D
                 data={graphData}
                 onNodeClick={(_entityId, pagePath) => {

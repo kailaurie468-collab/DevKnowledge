@@ -43,12 +43,24 @@ public class WikiFileService {
     }
 
     /**
+     * 验证路径安全性，防止路径穿越攻击
+     */
+    private Path validatePath(UUID userId, String relativePath) {
+        Path vaultRoot = getUserVaultPath(userId).normalize();
+        Path filePath = vaultRoot.resolve(relativePath).normalize();
+        if (!filePath.startsWith(vaultRoot)) {
+            throw new SecurityException("非法路径: " + relativePath);
+        }
+        return filePath;
+    }
+
+    /**
      * 写入 wiki 页面文件
      */
     public Mono<Void> writePage(UUID userId, String relativePath, String content) {
         return Mono.fromRunnable(() -> {
             try {
-                Path filePath = getUserVaultPath(userId).resolve(relativePath);
+                Path filePath = validatePath(userId, relativePath);
                 Files.createDirectories(filePath.getParent());
                 Files.writeString(filePath, content);
                 log.debug("写入 wiki 页面: {}", filePath);
@@ -63,7 +75,7 @@ public class WikiFileService {
      */
     public Mono<String> readPage(UUID userId, String relativePath) {
         return Mono.fromCallable(() -> {
-            Path filePath = getUserVaultPath(userId).resolve(relativePath);
+            Path filePath = validatePath(userId, relativePath);
             if (!Files.exists(filePath)) {
                 return null;
             }
@@ -77,7 +89,7 @@ public class WikiFileService {
     public Mono<Void> deletePage(UUID userId, String relativePath) {
         return Mono.fromRunnable(() -> {
             try {
-                Path filePath = getUserVaultPath(userId).resolve(relativePath);
+                Path filePath = validatePath(userId, relativePath);
                 if (Files.exists(filePath)) {
                     Files.delete(filePath);
                     log.info("删除 wiki 页面: {}", filePath);
@@ -93,7 +105,7 @@ public class WikiFileService {
      */
     public Mono<Boolean> pageExists(UUID userId, String relativePath) {
         return Mono.fromCallable(() -> {
-            Path filePath = getUserVaultPath(userId).resolve(relativePath);
+            Path filePath = validatePath(userId, relativePath);
             return Files.exists(filePath);
         }).subscribeOn(Schedulers.boundedElastic());
     }

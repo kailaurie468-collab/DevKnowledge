@@ -117,9 +117,10 @@ public class AiConfigService {
 
             if (target != null) {
                 // 更新已有配置
+                String provider = req.getProvider() != null ? req.getProvider() : "openai-compatible";
                 target.setName(req.getName() != null && !req.getName().isBlank()
-                        ? req.getName() : req.getProvider());
-                target.setProvider(req.getProvider());
+                        ? req.getName() : provider);
+                target.setProvider(provider);
                 target.setBaseUrl(req.getBaseUrl());
                 target.setModel(req.getModel());
                 target.setMaxTokens(req.getMaxTokens() != null ? req.getMaxTokens() : 4096);
@@ -139,12 +140,13 @@ public class AiConfigService {
                 // 先取消旧的激活配置，避免唯一约束冲突
                 deactivateAll(userId);
 
+                String provider = req.getProvider() != null ? req.getProvider() : "openai-compatible";
                 target = new UserAiConfig();
                 target.setId(UUID.randomUUID());
                 target.setUserId(userId);
                 target.setName(req.getName() != null && !req.getName().isBlank()
-                        ? req.getName() : req.getProvider());
-                target.setProvider(req.getProvider());
+                        ? req.getName() : provider);
+                target.setProvider(provider);
                 target.setApiKey(aes.encrypt(req.getApiKey()));
                 target.setBaseUrl(req.getBaseUrl());
                 target.setModel(req.getModel());
@@ -294,6 +296,9 @@ public class AiConfigService {
                         String msg = e.getMessage();
                         log.warn("AI 连接测试失败: {}", msg);
                         // 提供更友好的错误信息
+                        if (msg != null && msg.contains("400")) {
+                            return Mono.just(new AiConfigResponse.TestResult(false, "请求参数错误，请检查后重新配置"));
+                        }
                         if (msg != null && msg.contains("401")) {
                             return Mono.just(new AiConfigResponse.TestResult(false, "API Key 无效，请检查后重新配置"));
                         }

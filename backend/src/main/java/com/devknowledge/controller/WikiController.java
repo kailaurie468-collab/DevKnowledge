@@ -63,7 +63,13 @@ public class WikiController {
                     resp.setStatus(doc.getStatus());
                     resp.setMessage("文档上传成功，正在处理");
                     return ResponseEntity.ok(resp);
-                }));
+                }))
+                .onErrorResume(e -> {
+                    WikiUploadResponse resp = new WikiUploadResponse();
+                    resp.setStatus("error");
+                    resp.setMessage("上传失败: " + e.getMessage());
+                    return Mono.just(ResponseEntity.badRequest().body(resp));
+                });
     }
 
     /**
@@ -84,6 +90,7 @@ public class WikiController {
                     return new Object[]{fp.filename(), bytes};
                 }))
                 .filter(fileData -> ((String) fileData[0]).endsWith(".md"))
+                // 并发限制为 3，避免同时发起过多 LLM 调用
                 .flatMap(fileData -> {
                     String filename = (String) fileData[0];
                     byte[] bytes = (byte[]) fileData[1];
@@ -95,7 +102,7 @@ public class WikiController {
                                 resp.setStatus(doc.getStatus());
                                 return resp;
                             });
-                })
+                }, 3)
                 .collectList()
                 .map(ResponseEntity::ok);
     }

@@ -192,6 +192,18 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
 
                     return Flux.empty();
                 })
+                /**
+                 * 时间 →
+                 *
+                 * 服务端推送:  chunk1  chunk2  chunk3  chunk4  [DONE] (关闭连接)
+                 *               ↓       ↓       ↓       ↓        ↓
+                 * postStream:   解析    解析    解析    解析    filter过滤掉 → onComplete信号
+                 *               ↓       ↓       ↓       ↓        ↓
+                 * concatMap:  处理1   处理2   处理3   处理4    收到onComplete，自身也完成
+                 *                                                     ↓
+                 * concatWith:                                    前驱完成！触发 Flux.defer()
+                 *                                                读取 sharedState，发出工具调用
+                 */
                 // 流结束后，统一发送工具调用
                 .concatWith(Flux.defer(() -> {
                     String reasoning = ((StringBuilder) sharedState.get("reasoning")).toString();

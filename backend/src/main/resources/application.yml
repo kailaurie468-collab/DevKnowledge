@@ -24,6 +24,7 @@ spring:
     clean-disabled: false
 
 mybatis-plus:
+  type-handlers-package: com.devknowledge.model
   configuration:
     map-underscore-to-camel-case: true
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl

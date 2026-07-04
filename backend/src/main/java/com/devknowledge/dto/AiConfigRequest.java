@@ -17,9 +17,8 @@ public class AiConfigRequest {
     /** 配置名称（如 "DeepSeek 主力"） */
     private String name;
 
-    /** AI 服务商：openai / anthropic / deepseek / custom */
-    @NotBlank
-    private String provider;
+    /** AI 服务商（默认 openai-compatible，所有服务商走同一适配器） */
+    private String provider = "openai-compatible";
 
     /** 用户的 API Key（明文，后端加密后存储） */
     private String apiKey;
