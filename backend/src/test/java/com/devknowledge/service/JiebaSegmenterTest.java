@@ -210,6 +210,51 @@ class JiebaSegmenterTest {
         }
     }
 
+    // ==================== buildOrTsQuery() OR 语义 tsquery ====================
+
+    @Nested
+    @DisplayName("buildOrTsQuery OR 语义 tsquery 构建测试")
+    class OrTsQueryTests {
+
+        @Test
+        @DisplayName("中文查询用 | 连接，词项被单引号包裹")
+        void chineseOrTsQuery() {
+            String tsQuery = segmenter.buildOrTsQuery("知识图谱检索");
+            assertThat(tsQuery).isNotBlank();
+            assertThat(tsQuery).contains(" | ");
+            assertThat(tsQuery).doesNotContain(" & ");
+            for (String part : tsQuery.split(" \\| ")) {
+                assertThat(part).startsWith("'").endsWith("'");
+            }
+        }
+
+        @Test
+        @DisplayName("入库分词与查询分词词项完全一致")
+        void indexAndQueryTokensMatch() {
+            // 核心不变量：tsv 存的词项与 tsquery 查的词项必须来自同一套管道，
+            // 否则中文整串会变成单个 lexeme 而永远匹配不上
+            String text = "React Navigation 导航库使用指南";
+            String expected = java.util.Arrays.stream(segmenter.segment(text).split(" "))
+                    .map(token -> "'" + token + "'")
+                    .collect(java.util.stream.Collectors.joining(" | "));
+            assertThat(segmenter.buildOrTsQuery(text)).isEqualTo(expected);
+        }
+
+        @Test
+        @DisplayName("null 和空串返回空字符串")
+        void blankOrTsQuery() {
+            assertThat(segmenter.buildOrTsQuery(null)).isEmpty();
+            assertThat(segmenter.buildOrTsQuery("")).isEmpty();
+            assertThat(segmenter.buildOrTsQuery("   ")).isEmpty();
+        }
+
+        @Test
+        @DisplayName("全停用词查询返回空串，避免生成非法 tsquery")
+        void allStopWordsReturnsEmpty() {
+            assertThat(segmenter.buildOrTsQuery("the a of")).isEmpty();
+        }
+    }
+
     // ==================== 分词一致性 ====================
 
     @Nested

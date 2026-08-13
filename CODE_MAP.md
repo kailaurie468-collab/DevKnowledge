@@ -222,7 +222,8 @@ DevKnowledge/
   → EmbeddingService 批量向量化（batch=5）→ 存入 kb_chunks (pgvector)
 
 Demo 生成时（三阶段检索）：
-  → BM25 关键词检索（websearch_to_tsquery + ts_rank_cd）
+  → BM25 关键词检索（JiebaSegmenter.buildOrTsQuery → to_tsquery + ts_rank_cd）
+    查询侧与入库侧共用同一套 Jieba 分词，OR 语义保召回
   → EmbeddingService 查询向量化 → pgvector 余弦相似度
   → RRF 融合排序（k=60）
   → Reranker 精排（可选，失败优雅降级）

@@ -60,10 +60,9 @@ public class JiebaSegmenter {
         return cleanTokens(text).stream().collect(Collectors.joining(" "));
     }
 
-    // TODO: 修改&改为|
     /**
-     * 构建 tsquery 表达式：分词后用 & 连接
-     * 用于 PostgreSQL 全文检索的 @@ 匹配运算符
+     * 构建 AND 语义的 tsquery 表达式：分词后用 & 连接
+     * 要求所有词项都命中，召回率低，仅用于精确匹配场景（检索链路请用 {@link #buildOrTsQuery}）
      *
      * @param text 查询文本
      * @return tsquery 表达式，如 "知识 & 图谱 & 检索"
@@ -71,6 +70,33 @@ public class JiebaSegmenter {
     public String buildTsQuery(String text) {
         if (text == null || text.isBlank()) return "";
         return cleanTokens(text).stream().collect(Collectors.joining(" & "));
+    }
+
+    /**
+     * 构建 OR 语义的 tsquery 表达式：分词后用 | 连接，供 to_tsquery() 使用
+     * <p>
+     * 必须与入库侧走同一套 cleanTokens 管道：入库时 tsv 存的是 Jieba 切分后的词项，
+     * 若查询侧直接把原文交给 PostgreSQL，simple 配置不切中文，
+     * 整串连续汉字会变成单个 lexeme（如 "导航库"），永远匹配不上 tsv 里的 "导航"、"库"。
+     * <p>
+     * 用 OR 而非 AND：部分命中即可召回，精度交给后续 Reranker 精排。
+     *
+     * @param text 查询文本
+     * @return tsquery 表达式，如 "'知识' | '图谱' | '检索'"；无有效词项时返回空串
+     */
+    public String buildOrTsQuery(String text) {
+        if (text == null || text.isBlank()) return "";
+        return cleanTokens(text).stream()
+                .map(JiebaSegmenter::quoteLexeme)
+                .collect(Collectors.joining(" | "));
+    }
+
+    /**
+     * 将词项包装成 tsquery 字面量：单引号包裹 + 内部反斜杠和单引号加倍
+     * 避免词项中的 & | ! ( ) : * 等字符被 to_tsquery 当作运算符解析
+     */
+    private static String quoteLexeme(String token) {
+        return "'" + token.replace("\\", "\\\\").replace("'", "''") + "'";
     }
 
     /**

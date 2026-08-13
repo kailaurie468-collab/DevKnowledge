@@ -180,6 +180,21 @@ public class KbController {
         return kbService.searchByBm25(id, query, topK).map(ResponseEntity::ok);
     }
 
+    /**
+     * 重建 BM25 索引（维护接口）
+     * 用 Jieba 统一重建全部 chunk 的 tsv，修复存量数据与新入库数据分词方案不一致的问题
+     */
+    @PostMapping("/{id}/reindex-bm25")
+    public Mono<ResponseEntity<Map<String, Object>>> reindexBm25(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable UUID id) {
+        UUID userId = extractUserId(authHeader);
+        if (userId == null) return Mono.just(ResponseEntity.status(401).build());
+        return kbService.reindexBm25(userId, id)
+                .map(count -> ResponseEntity.ok(Map.<String, Object>of("reindexed", count)))
+                .onErrorResume(e -> Mono.just(ResponseEntity.badRequest().build()));
+    }
+
     private UUID extractUserId(String authHeader) {
         if (authHeader == null || !authHeader.startsWith("Bearer ")) return null;
         try {

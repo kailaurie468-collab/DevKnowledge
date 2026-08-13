@@ -509,11 +509,12 @@ public class KbService {
             KnowledgeBase kb = kbMapper.selectById(kbId);
             if (kb == null) return List.<KbChunkSearchResult>of();
             // 通道一：BM25 关键词检索（top-20）
-            // 使用 websearch_to_tsquery 接受原始查询，默认 OR 语义，召回率更高
-            List<KbChunkSearchResult> bm25Results = query.isBlank()
+            // 查询侧必须走与入库同一套 Jieba 分词，否则中文整串无法命中 tsv 中的词项
+            String bm25TsQuery = jiebaSegmenter.buildOrTsQuery(query);
+            List<KbChunkSearchResult> bm25Results = bm25TsQuery.isEmpty()
                     ? List.of()
-                    : chunkMapper.searchByBm25(kbId, query, 20);
-            log.info("BM25 召回 {} 条, query={}", bm25Results.size(), query);
+                    : chunkMapper.searchByBm25(kbId, bm25TsQuery, 20);
+            log.info("BM25 召回 {} 条, tsquery={}", bm25Results.size(), bm25TsQuery);
 
             // 通道二：向量检索（top-20）
             List<KbChunkSearchResult> vectorResults;
@@ -581,12 +582,40 @@ public class KbService {
 
     /**
      * BM25 关键词检索
-     * 使用 websearch_to_tsquery 接受原始查询，PostgreSQL 统一分词
+     * 查询侧走 Jieba 分词 + OR 语义 tsquery，与入库分词保持一致
      */
     public Mono<List<KbChunkSearchResult>> searchByBm25(UUID kbId, String query, int topK) {
         return Mono.fromCallable(() -> {
-            if (query == null || query.isBlank()) return List.<KbChunkSearchResult>of();
-            return chunkMapper.searchByBm25(kbId, query, topK);
+            String tsQuery = jiebaSegmenter.buildOrTsQuery(query);
+            if (tsQuery.isEmpty()) return List.<KbChunkSearchResult>of();
+            return chunkMapper.searchByBm25(kbId, tsQuery, topK);
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * 重建知识库全部 chunk 的 BM25 tsv 索引
+     * <p>
+     * 存量数据由 V19 迁移用原始 content 生成 tsv（中文未分词），与新入库的 Jieba 词项不是同一套
+     * tokenization，导致同一知识库里两种方案并存、检索只能命中一半。此方法用 Jieba 统一重建。
+     *
+     * @return 重建的 chunk 数量
+     */
+    public Mono<Integer> reindexBm25(UUID userId, UUID kbId) {
+        return Mono.fromCallable(() -> {
+            KnowledgeBase kb = kbMapper.selectById(kbId);
+            if (kb == null || !kb.getUserId().equals(userId)) {
+                throw new IllegalArgumentException("知识库不存在或无权限");
+            }
+            // 只取 id + content，避免把 embedding 一起加载进内存
+            List<KbChunk> chunks = chunkMapper.selectList(
+                    new LambdaQueryWrapper<KbChunk>()
+                            .select(KbChunk::getId, KbChunk::getContent)
+                            .eq(KbChunk::getKbId, kbId));
+            for (KbChunk chunk : chunks) {
+                chunkMapper.updateTsvById(chunk.getId(), jiebaSegmenter.segment(chunk.getContent()));
+            }
+            log.info("BM25 索引重建完成: kbId={}, {} 个 chunk", kbId, chunks.size());
+            return chunks.size();
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
