@@ -45,6 +45,7 @@ docker-compose.override.yml
 
 # Claude Code
 .claude/
+CLAUDE.local.md
 
 # 应用数据目录
 raw_files/

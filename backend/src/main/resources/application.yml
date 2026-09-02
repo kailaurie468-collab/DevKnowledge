@@ -12,7 +12,7 @@ spring:
       max-parts: 20
       max-disk-usage-per-part: 10MB
   datasource:
-    url: jdbc:postgresql://192.168.23.128:5432/devknowledge
+    url: jdbc:postgresql://127.0.0.1:5432/devknowledge
     username: postgres
     password: 132639
     driver-class-name: org.postgresql.Driver
