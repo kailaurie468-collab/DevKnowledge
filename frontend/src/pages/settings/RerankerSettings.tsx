@@ -101,20 +101,6 @@ export function RerankerSettings() {
     }
   }
 
-  const handleDelete = async () => {
-    if (!selectedId) return
-    if (!confirm('确定删除此配置？')) return
-    try {
-      await rerankerApi.deleteConfig(selectedId)
-      setSelectedId(null)
-      setIsNew(true)
-      loadConfigs()
-      notify('配置已删除', 'success')
-    } catch (err) {
-      notify(err instanceof Error ? err.message : '删除失败', 'error')
-    }
-  }
-
   const handleActivate = async (id: string) => {
     try {
       await rerankerApi.switchConfig(id)

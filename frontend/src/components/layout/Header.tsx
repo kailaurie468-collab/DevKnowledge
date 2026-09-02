@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 import { ThemeToggle } from '@/components/effects/ThemeToggle'
+import { FeedbackDialog } from '@/components/FeedbackDialog'
 
 export function Header() {
   const { user, isAuthenticated, logout } = useAuthStore()
@@ -13,6 +14,7 @@ export function Header() {
 
       <nav className="flex items-center gap-4">
         <ThemeToggle />
+        <FeedbackDialog />
         {isAuthenticated ? (
           <>
             <span className="text-sm text-gray-600 dark:text-gray-300">{user?.displayName || user?.email}</span>

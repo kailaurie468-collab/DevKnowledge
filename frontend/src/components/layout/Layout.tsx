@@ -2,6 +2,7 @@ import { Outlet, Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 import { ThemeToggle } from '@/components/effects/ThemeToggle'
 import CardNav, { CardNavItem } from '@/components/effects/CardNav'
+import { FeedbackDialog } from '@/components/FeedbackDialog'
 import { Header } from './Header'
 import { Sidebar } from './Sidebar'
 
@@ -54,6 +55,7 @@ export function Layout() {
   const TopRightButtons = (
     <div className="flex items-center gap-4 h-full px-2">
       <ThemeToggle />
+      <FeedbackDialog />
       {isAuthenticated ? (
         <>
           <span className="text-sm text-gray-600 dark:text-gray-300 hidden sm:inline">{user?.displayName || user?.email}</span>

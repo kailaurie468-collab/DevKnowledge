@@ -114,7 +114,7 @@ public class DemoToolProvider {
         return args -> {
             try {
                 String query = extractJsonString(args, "query");
-                log.info("工具 search_links 执行，query={}", query);
+                log.info("工具 search_links 执行，queryLength={}", query != null ? query.length() : 0);
                 var results = knowledgeService.searchLinks(query).block();
                 if (results == null || results.isEmpty()) return "未找到相关文档";
 
@@ -161,7 +161,7 @@ public class DemoToolProvider {
         return args -> {
             try {
                 String query = extractJsonString(args, "query");
-                log.info("工具 search_kb 执行，kbId={}, query={}", kbId, query);
+                log.info("工具 search_kb 执行，kbId={}, queryLength={}", kbId, query != null ? query.length() : 0);
 
                 var results = kbService.searchKbVector(userId, kbId, query, 5).block();
                 if (results == null || results.isEmpty()) return "知识库中未找到相关内容";

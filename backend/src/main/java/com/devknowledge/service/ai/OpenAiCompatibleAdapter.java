@@ -4,6 +4,7 @@ import com.devknowledge.model.UserAiConfig;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.devknowledge.service.SensitiveDataSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -42,7 +43,7 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
         body.put("stream", true);
 
         return postStream(client, body)
-                .doOnNext(chunk -> log.info("AI 测试响应: {}", chunk))
+                .doOnNext(chunk -> log.debug("AI 测试响应块已接收"))
                 .last()
                 .mapNotNull(jsonNode -> {
                     if (jsonNode == null) return null;
@@ -145,8 +146,9 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
         sharedState.put("toolAcc", new LinkedHashMap<Integer, String[]>());
 
         return postStream(client, body)
-                .doOnNext(chunk -> log.debug("收到 chunk: {}", chunk))
-                .doOnError(e -> log.error("AI 流式调用错误: {}", e.getMessage()))
+                .doOnNext(chunk -> log.debug("AI 流式响应块已接收"))
+                .doOnError(e -> log.error("AI 流式调用错误: type={}, message={}",
+                        e.getClass().getSimpleName(), SensitiveDataSanitizer.sanitize(e.getMessage())))
                 .doOnComplete(() -> log.info("AI 流式调用完成"))
                 .concatMap(chunk -> {
                     JsonNode delta = extractDelta(chunk);
@@ -253,7 +255,7 @@ public class OpenAiCompatibleAdapter implements AiProviderAdapter {
                     try {
                         return objectMapper.readTree(line);
                     } catch (Exception e) {
-                        log.debug("解析 chunk 失败: {}", line);
+                        log.debug("解析 AI 响应块失败: length={}", line != null ? line.length() : 0);
                         return null;
                     }
                 });

@@ -16,6 +16,8 @@ import { RerankerSettings } from '@/pages/settings/RerankerSettings'
 import { StorageSettings } from '@/pages/settings/StorageSettings'
 import { RagMetricsPage } from '@/pages/RagMetricsPage'
 import { WikiPage } from '@/pages/WikiPage'
+import { AdminPage } from '@/pages/AdminPage'
+import { ClientErrorReporter } from '@/components/ClientErrorReporter'
 
 export default function App() {
   const [particleVisible, setParticleVisible] = useState(true)
@@ -23,6 +25,7 @@ export default function App() {
   return (
     <ParticleContext.Provider value={{ visible: particleVisible, setVisible: setParticleVisible }}>
       <NotifyProvider>
+      <ClientErrorReporter />
       <div className="app-root">
       <BrowserRouter>
         <Routes>
@@ -34,6 +37,7 @@ export default function App() {
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="/kb" element={<KbPage />} />
             <Route path="/wiki" element={<WikiPage />} />
+            <Route path="/admin" element={<AdminPage />} />
 
             {/* 设置嵌套路由 */}
             <Route path="/settings" element={<SettingsPage />}>

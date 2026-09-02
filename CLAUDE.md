@@ -19,7 +19,7 @@
 | 已有模块的设计文档 | `docs/superpowers/specs/` |
 | 已有模块的实施计划 | `docs/superpowers/plans/` |
 | 开发进度备忘 | `进度.md` |
-| 数据库迁移 | `backend/src/main/resources/db/migration/`（当前最新 `V19`） |
+| 数据库迁移 | `backend/src/main/resources/db/migration/`（当前最新 `V20`） |
 | 运行时配置（库连接、JWT、路径） | `backend/src/main/resources/application.yml` |
 
 ---

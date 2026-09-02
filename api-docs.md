@@ -304,3 +304,70 @@
 - **Query Params:** `q` (关键词)
 - **Auth Required:** Yes
 - **Response (200 OK):** 返回匹配的文档片段列表。
+
+---
+
+## 7. 错误上报与用户反馈
+
+### 7.1 前端错误上报
+- **URL:** `/api/telemetry/errors`
+- **Method:** `POST`
+- **Auth Required:** No（登录用户会自动关联 userId）
+- **说明:** 只接收脱敏错误摘要和运行环境，不接收 Prompt、API Key、密码或完整 AI 输出。
+
+### 7.2 用户意见反馈
+- **URL:** `/api/feedback`
+- **Method:** `POST`
+- **Auth Required:** No
+- **Request Body:**
+  ```json
+  {
+    "feedbackType": "FEATURE",
+    "content": "希望支持更多代码框架",
+    "contact": "user@example.com",
+    "page": "/demos",
+    "requestId": "request-uuid"
+  }
+  ```
+
+---
+
+## 8. 开发者后台接口
+
+后台接口需要携带登录 Token，且 Token 对应邮箱必须配置在
+`DEVKNOWLEDGE_ADMIN_EMAILS` 白名单中；普通用户不会看到后台导航。
+
+### 8.1 概览指标
+- **URL:** `/api/admin/overview`
+- **Method:** `GET`
+- **Auth Required:** Admin
+- **返回:** 用户数、累计 Token、请求数、成功率、平均/P95 耗时、错误数、反馈数。
+
+### 8.2 错误记录
+- **URL:** `/api/admin/errors?limit=50`
+- **Method:** `GET`
+- **Auth Required:** Admin
+- **返回:** 最近的脱敏错误摘要和请求上下文。
+
+### 8.3 请求耗时记录
+- **URL:** `/api/admin/traces?page=1&size=20`
+- **Method:** `GET`
+- **Auth Required:** Admin
+- **返回:** 分页请求记录，包含状态、总耗时、SSE 首事件/首文本耗时、当前页、总条数和总页数。
+
+### 8.4 用户反馈
+- **URL:** `/api/admin/feedback?limit=50`
+- **Method:** `GET`
+- **Auth Required:** Admin
+- **返回:** 最近的用户反馈记录。
+
+### 8.5 请求链路 Header
+- `X-Request-Id`: 客户端生成合法 UUID 时由服务端复用，否则由 WebFilter 生成。
+- `X-Client-Version`: 前端版本，默认值为 `dev`。
+- 服务端响应会返回 `X-Request-Id`，便于错误反馈和日志关联。
+
+### 8.6 邮件与后台配置
+- `DEVKNOWLEDGE_ADMIN_EMAILS`: 开发者后台管理员邮箱，多个邮箱用逗号分隔。
+- `DEVKNOWLEDGE_DEVELOPER_EMAIL`: 错误和用户反馈的收件邮箱。
+- `MAIL_HOST` / `MAIL_PORT` / `MAIL_USERNAME` / `MAIL_PASSWORD` / `MAIL_FROM`: SMTP 配置。
+- 未配置 SMTP 或开发者邮箱时，记录仍会保存到数据库，但不会发送邮件。

@@ -90,7 +90,6 @@ class SkillSuggestionServiceTest {
         @DisplayName("无行为数据时不生成推荐")
         void noActivityNoSuggestions() {
             when(activityMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of());
-            when(suggestionMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of());
 
             List<SkillSuggestion> result = suggestionService.generateSuggestions(userId).block();
 

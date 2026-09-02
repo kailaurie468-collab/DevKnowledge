@@ -111,15 +111,14 @@ public class WikiLlmService {
             AnalysisResult result = doParseAnalysis(response);
             return Mono.just(result);
         } catch (Exception e) {
-            log.warn("首次解析失败 ({}), 用严格 prompt 重试", e.getMessage());
-            // 记录原始响应用于调试
-            log.debug("解析失败的原始响应: {}", response.substring(0, Math.min(response.length(), 500)));
+            log.warn("首次解析失败，响应长度={}，错误类型={}，用严格 prompt 重试",
+                    response.length(), e.getClass().getSimpleName());
             return callLlm(userId, retryPrompt)
                     .map(retryResponse -> {
                         try {
                             return doParseAnalysis(retryResponse);
                         } catch (Exception retryEx) {
-                            log.error("重试解析仍失败: {}", retryEx.getMessage());
+                            log.error("重试解析仍失败: type={}", retryEx.getClass().getSimpleName());
                             AnalysisResult fallback = new AnalysisResult();
                             fallback.setSummary("分析失败，请重试");
                             fallback.setEntities(List.of());

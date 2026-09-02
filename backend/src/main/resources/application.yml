@@ -22,6 +22,15 @@ spring:
     locations: classpath:db/migration
     clean-on-validation-error: true
     clean-disabled: false
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    from: ${MAIL_FROM:}
+    properties:
+      mail.smtp.auth: ${MAIL_SMTP_AUTH:true}
+      mail.smtp.starttls.enable: ${MAIL_SMTP_STARTTLS:true}
 
 mybatis-plus:
   type-handlers-package: com.devknowledge.model
@@ -47,4 +56,12 @@ wiki:
 kb:
   raw-file:
     storage-path: raw_files
+
+app:
+  # 管理后台使用邮箱白名单鉴权，多个邮箱用逗号分隔
+  admin:
+    emails: ${DEVKNOWLEDGE_ADMIN_EMAILS:2573774516@qq.com}
+  # 邮件 SMTP 配置通过环境变量提供，避免把凭据提交到仓库
+  notifications:
+    developer-email: ${DEVKNOWLEDGE_DEVELOPER_EMAIL:}
 

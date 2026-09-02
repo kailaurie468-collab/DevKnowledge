@@ -71,7 +71,10 @@ DevKnowledge/
 │       │   │   ├── KbController.java          # 知识库 CRUD + 文档上传 + 拖拽排序
 │       │   │   ├── WikiController.java        # Wiki 页面 CRUD
 │       │   │   ├── ActivityController.java    # 用户行为记录
-│       │   │   └── SkillController.java       # Skills CRUD
+│       │   │   ├── SkillController.java       # Skills CRUD
+│       │   │   ├── AdminController.java       # 开发者后台指标/错误/反馈查询
+│       │   │   ├── FeedbackController.java    # 用户意见反馈
+│       │   │   └── TelemetryController.java   # 前端错误上报
 │       │   ├── service/         # 业务逻辑层
 │       │   │   ├── AuthService.java           # 注册/登录/JWT
 │       │   │   ├── AiConfigService.java       # AI 配置（多配置 + AES 加密）
@@ -87,7 +90,12 @@ DevKnowledge/
 │       │   │   ├── MarkdownChunker.java       # Markdown AST 切分
 │       │   │   ├── JiebaSegmenter.java        # 中文分词（cleanTokens 4 层过滤）
 │       │   │   ├── RrfRanker.java             # RRF 融合排序
-│       │   │   ├── RawFileStorageService.java # 原始文件存储
+│       │   │   ├── RequestTiming.java         # 请求与关键阶段计时上下文
+│       │   │   ├── RequestObservabilityService.java # 观测、错误、反馈记录与通知
+│       │   │   ├── NotificationService.java   # 异步开发者邮件通知
+│       │   │   ├── SensitiveDataSanitizer.java # 错误摘要脱敏
+│       │   │   ├── AdminService.java          # 开发者后台聚合查询
+│       │   │   └── RawFileStorageService.java # 原始文件存储
 │       │   │   ├── WikiFileService.java       # Wiki 文件操作
 │       │   │   ├── WikiIngestService.java     # Wiki 文档摄取 + LLM 分析
 │       │   │   ├── WikiLlmService.java        # Wiki LLM 调用
@@ -127,6 +135,9 @@ DevKnowledge/
 │       │   │   ├── SkillMapper.java
 │       │   │   ├── SkillStepMapper.java
 │       │   │   ├── SkillSuggestionMapper.java
+│       │   │   ├── RequestTraceMapper.java / RequestSpanMapper.java
+│       │   │   ├── ErrorReportMapper.java / UserFeedbackMapper.java
+│       │   │   ├── AdminMapper.java          # 后台聚合统计查询
 │       │   │   └── UserActivityMapper.java
 │       │   ├── model/           # 实体类
 │       │   │   ├── User.java / UserAiConfig.java / UserEmbeddingConfig.java
@@ -136,6 +147,8 @@ DevKnowledge/
 │       │   │   ├── Demo.java / EmbeddingUsage.java / RagMetric.java
 │       │   │   ├── WikiEntity.java / WikiRelation.java / WikiIndex.java / WikiDocument.java
 │       │   │   ├── Skill.java / SkillStep.java / SkillSuggestion.java
+│       │   │   ├── RequestTrace.java / RequestSpan.java
+│       │   │   ├── ErrorReport.java / UserFeedback.java
 │       │   │   ├── UserActivity.java
 │       │   │   ├── UuidTypeHandler.java       # UUID ↔ PostgreSQL uuid
 │       │   │   ├── StringArrayTypeHandler.java# String[] ↔ text[]
@@ -147,7 +160,7 @@ DevKnowledge/
 │       │       └── AesUtil.java               # AES-256-GCM 加密
 │       └── resources/
 │           ├── application.yml
-│           └── db/migration/    # Flyway 迁移脚本（V1-V19）
+│           └── db/migration/    # Flyway 迁移脚本（V1-V20）
 │
 ├── docs/                        # 项目文档（specs/plans/test-data）
 ├── logs/                        # 应用日志

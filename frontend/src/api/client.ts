@@ -1,4 +1,7 @@
+import { reportClientError } from '@/utils/errorReporting'
+
 const API_BASE = '/api'
+const CLIENT_VERSION = import.meta.env.VITE_APP_VERSION || 'dev'
 
 interface RequestConfig extends RequestInit {
   params?: Record<string, string>
@@ -20,6 +23,8 @@ class ApiClient {
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      'X-Client-Version': CLIENT_VERSION,
+      'X-Request-Id': crypto.randomUUID(),
       ...(init.headers as Record<string, string>),
     }
 
@@ -28,7 +33,21 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${token}`
     }
 
-    const response = await fetch(url, { ...init, headers })
+    const requestId = headers['X-Request-Id']
+    let response: Response
+    try {
+      response = await fetch(url, { ...init, headers })
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        reportClientError({
+          requestId,
+          errorSummary: error instanceof Error ? error.message : '网络请求失败',
+          errorType: 'NetworkError',
+          stage: 'http',
+        })
+      }
+      throw error
+    }
 
     if (response.status === 401) {
       localStorage.removeItem('accessToken')
@@ -41,7 +60,16 @@ class ApiClient {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ message: response.statusText }))
-      throw new Error(error.message || `HTTP ${response.status}`)
+      const message = error.message || `HTTP ${response.status}`
+      if (response.status >= 500 || response.status === 408 || response.status === 429) {
+        reportClientError({
+          requestId,
+          errorSummary: message,
+          errorType: `Http${response.status}`,
+          stage: 'http',
+        })
+      }
+      throw new Error(message)
     }
 
     if (response.status === 204) {
@@ -84,23 +112,48 @@ class ApiClient {
 
   async *stream(endpoint: string, body: unknown, signal?: AbortSignal): AsyncGenerator<{ event: string; data: string }> {
     const token = this.getToken()
+    const requestId = crypto.randomUUID()
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      'X-Client-Version': CLIENT_VERSION,
+      'X-Request-Id': requestId,
     }
     if (token) {
       headers['Authorization'] = `Bearer ${token}`
     }
 
-    const response = await fetch(`${API_BASE}${endpoint}`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal,
-    })
+    let response: Response
+    try {
+      response = await fetch(`${API_BASE}${endpoint}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal,
+      })
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        reportClientError({
+          requestId,
+          errorSummary: error instanceof Error ? error.message : 'SSE 网络请求失败',
+          errorType: 'SSENetworkError',
+          stage: 'sse',
+        })
+      }
+      throw error
+    }
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ message: response.statusText }))
-      throw new Error(error.message || `HTTP ${response.status}`)
+      const message = error.message || `HTTP ${response.status}`
+      if (response.status >= 500 || response.status === 408 || response.status === 429) {
+        reportClientError({
+          requestId,
+          errorSummary: message,
+          errorType: `SSEHttp${response.status}`,
+          stage: 'sse',
+        })
+      }
+      throw new Error(message)
     }
 
     if (!response.body) throw new Error('No response body')

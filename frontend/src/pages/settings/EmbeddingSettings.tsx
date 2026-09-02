@@ -39,9 +39,7 @@ export function EmbeddingSettings() {
   }
 
   const loadKnowledgeBases = () => {
-    kbApi.getKbs().then(list => {
-      setKnowledgeBases(list)
-    }).catch(console.error)
+    kbApi.getKbs().then(setKnowledgeBases).catch(console.error)
   }
 
   const selectConfig = async (config: EmbeddingConfig) => {
@@ -116,23 +114,6 @@ export function EmbeddingSettings() {
       setTesting(false)
     }
   }
-
-  const handleDelete = async () => {
-    if (!selectedId) return
-    if (!confirm('确定删除此配置？')) return
-    try {
-      await embeddingApi.deleteConfig(selectedId)
-      setSelectedId(null)
-      setIsNew(true)
-      loadConfigs()
-      notify('配置已删除', 'success')
-    } catch (err) {
-      notify(err instanceof Error ? err.message : '删除失败', 'error')
-    }
-  }
-
-  // 获取关联的知识库
-  const linkedKBs = knowledgeBases.filter(kb => kb.userId === configs.find(c => c.id === selectedId)?.id)
 
   const maxTokenValue = tokenUsage.reduce((max, d) => Math.max(max, d.tokens), 0)
   const totalTokens = tokenUsage.reduce((sum, d) => sum + d.tokens, 0)

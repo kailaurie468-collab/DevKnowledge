@@ -95,13 +95,18 @@ const DotGrid: React.FC<DotGridProps> = ({
 
     const { width, height } = wrap.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
+    const pixelWidth = Math.max(1, Math.round(width * dpr));
+    const pixelHeight = Math.max(1, Math.round(height * dpr));
 
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
+    // 只在实际像素尺寸变化时重置画布，避免重复清空绘图缓冲区
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
+    }
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
     const ctx = canvas.getContext('2d');
-    if (ctx) ctx.scale(dpr, dpr);
+    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const cols = Math.floor((width + gap) / (dotSize + gap));
     const rows = Math.floor((height + gap) / (dotSize + gap));
@@ -176,15 +181,31 @@ const DotGrid: React.FC<DotGridProps> = ({
   useEffect(() => {
     buildGrid();
     let ro: ResizeObserver | null = null;
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // 窗口拖动时保留上一帧，停止调整约 100ms 后再重建网格
+    const scheduleBuildGrid = () => {
+      if (resizeTimer !== null) {
+        clearTimeout(resizeTimer);
+      }
+      resizeTimer = setTimeout(() => {
+        resizeTimer = null;
+        buildGrid();
+      }, 100);
+    };
+
     if ('ResizeObserver' in window) {
-      ro = new ResizeObserver(buildGrid);
+      ro = new ResizeObserver(scheduleBuildGrid);
       wrapperRef.current && ro.observe(wrapperRef.current);
     } else {
-      (window as Window).addEventListener('resize', buildGrid);
+      (window as Window).addEventListener('resize', scheduleBuildGrid);
     }
     return () => {
       if (ro) ro.disconnect();
-      else window.removeEventListener('resize', buildGrid);
+      else window.removeEventListener('resize', scheduleBuildGrid);
+      if (resizeTimer !== null) {
+        clearTimeout(resizeTimer);
+      }
     };
   }, [buildGrid]);
 

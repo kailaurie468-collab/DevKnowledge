@@ -389,26 +389,44 @@ export default function FloatingLines({
     scene.add(mesh);
 
     const clock = new Clock();
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
     const setSize = () => {
       const el = containerRef.current!;
-      const width = el.clientWidth || 1;
-      const height = el.clientHeight || 1;
+      const width = Math.max(1, Math.round(el.clientWidth));
+      const height = Math.max(1, Math.round(el.clientHeight));
+      const pixelWidth = Math.round(width * renderer.getPixelRatio());
+      const pixelHeight = Math.round(height * renderer.getPixelRatio());
+
+      // 画布尺寸未变化时不要重置 WebGL 绘图缓冲区，避免无意义的闪烁
+      if (renderer.domElement.width === pixelWidth && renderer.domElement.height === pixelHeight) {
+        return;
+      }
 
       renderer.setSize(width, height, false);
-
-      const canvasWidth = renderer.domElement.width;
-      const canvasHeight = renderer.domElement.height;
-      uniforms.iResolution.value.set(canvasWidth, canvasHeight, 1);
+      uniforms.iResolution.value.set(renderer.domElement.width, renderer.domElement.height, 1);
     };
 
     setSize();
+
+    // 窗口拖动时延迟调整 WebGL buffer，期间由 CSS 拉伸上一帧，避免反复清屏
+    const scheduleResize = () => {
+      if (resizeTimer !== null) {
+        clearTimeout(resizeTimer);
+      }
+      resizeTimer = setTimeout(() => {
+        resizeTimer = null;
+        if (active) {
+          setSize();
+        }
+      }, 100);
+    };
 
     const ro =
       typeof ResizeObserver !== 'undefined'
         ? new ResizeObserver(() => {
             if (!active) return;
-            setSize();
+            scheduleResize();
           })
         : null;
 
@@ -471,6 +489,9 @@ export default function FloatingLines({
       active = false;
 
       cancelAnimationFrame(raf);
+      if (resizeTimer !== null) {
+        clearTimeout(resizeTimer);
+      }
 
       if (ro) ro.disconnect();
 

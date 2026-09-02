@@ -505,81 +505,112 @@ public class KbService {
      * BM25 和 Embedding 两条通道各召回 top-20，使用 RRF 融合重排后输出 topK 候选集
      */
     public Mono<List<KbChunkSearchResult>> searchKbVector(UUID userId, UUID kbId, String query, int topK) {
-        return Mono.fromCallable(() -> {
-            KnowledgeBase kb = kbMapper.selectById(kbId);
-            if (kb == null) return List.<KbChunkSearchResult>of();
-            // 通道一：BM25 关键词检索（top-20）
-            // 查询侧必须走与入库同一套 Jieba 分词，否则中文整串无法命中 tsv 中的词项
-            String bm25TsQuery = jiebaSegmenter.buildOrTsQuery(query);
-            List<KbChunkSearchResult> bm25Results = bm25TsQuery.isEmpty()
-                    ? List.of()
-                    : chunkMapper.searchByBm25(kbId, bm25TsQuery, 20);
-            log.info("BM25 召回 {} 条, tsquery={}", bm25Results.size(), bm25TsQuery);
+        return Mono.deferContextual(contextView -> {
+            RequestTiming timing = contextView.getOrDefault(RequestTiming.CONTEXT_KEY, null);
+            RequestTiming.Stage ragStage = timing == null ? null : timing.startStage("rag");
 
-            // 通道二：向量检索（top-20）
-            List<KbChunkSearchResult> vectorResults;
-            UserEmbeddingConfig embedConfig = embeddingConfigService.getActiveConfig(userId);
-            if (embedConfig == null) {
-                log.warn("用户未配置 Embedding AI，向量通道回退到 LIKE 搜索");
-                vectorResults = searchKbFallback(kbId, query);
-            } else {
-                AesUtil aes = new AesUtil(aesSecret);
-                String apiKey = aes.decrypt(embedConfig.getApiKey());
-                EmbeddingService.EmbeddingResult result = embeddingService.embedBatch(
-                        List.of(query), embedConfig.getBaseUrl(), apiKey,
-                        kb.getEmbeddingModel(), 1024);
-                float[] queryVector = result.vectors().get(0);
-                embeddingUsageService.recordUsage(userId, embedConfig.getId(), result.promptTokens());
-                String vectorStr = EmbeddingService.vectorToString(queryVector);
-                vectorResults = chunkMapper.searchByVector(kbId, vectorStr, 20);
-            }
-            log.info("向量通道召回 {} 条", vectorResults.size());
+            return Mono.fromCallable(() -> {
+                KnowledgeBase kb = kbMapper.selectById(kbId);
+                if (kb == null) return List.<KbChunkSearchResult>of();
 
-            // RRF 融合排序：候选池取较大值，给 Reranker 足够的精选空间
-            UserRerankerConfig rerankerConfig;
-            boolean hasReranker = (rerankerConfig = rerankerConfigService.getActiveConfig(userId)) != null;
-            int candidateSize = hasReranker ? Math.max(topK * 5, 20) : topK;
-            List<KbChunkSearchResult> merged = rrfRanker.merge(
-                    bm25Results, vectorResults, 60, candidateSize, KbChunkSearchResult::getId);
-            log.info("RRF 融合后返回 {} 条（候选池={}）", merged.size(), candidateSize);
+                // 通道一：BM25 关键词检索（top-20）
+                // 查询侧必须走与入库同一套 Jieba 分词，否则中文整串无法命中 tsv 中的词项
+                String bm25TsQuery = jiebaSegmenter.buildOrTsQuery(query);
+                List<KbChunkSearchResult> bm25Results = timing == null
+                        ? (bm25TsQuery.isEmpty() ? List.of() : chunkMapper.searchByBm25(kbId, bm25TsQuery, 20))
+                        : timing.measureStage("bm25", () ->
+                        bm25TsQuery.isEmpty() ? List.of() : chunkMapper.searchByBm25(kbId, bm25TsQuery, 20));
+                // 查询词可能包含用户 Prompt，不写入日志；链路通过 requestId 关联
+                log.info("BM25 召回 {} 条", bm25Results.size());
 
-            // 精排：Reranker 交叉编码重排序（仅在用户配置了 Reranker 时执行）
-            if (rerankerConfig != null && !merged.isEmpty()) {
-                try {
-                    AesUtil aes2 = new AesUtil(aesSecret);
-                    String rerankerApiKey = aes2.decrypt(rerankerConfig.getApiKey());
-                    // 将候选集文本传给 Reranker，index 对应 merged 列表的下标
-                    List<String> texts = merged.stream().map(KbChunkSearchResult::getContent).toList();
-                    List<RerankerService.RerankResult> reranked = rerankerService.rerank(
-                            query, texts, rerankerConfig.getBaseUrl(), rerankerApiKey,
-                            rerankerConfig.getModel(), topK);
-                    // 按 Reranker 返回的 index 映射回原始候选集，取 topK
-                    final List<KbChunkSearchResult> finalMerged = merged;
-                    merged = reranked.stream()
-                            .filter(r -> r.index() < finalMerged.size())
-                            .limit(topK)
-                            .map(r -> finalMerged.get(r.index()))
-                            .toList();
-                    log.info("Reranker 精排完成: {} 条（从 {} 条候选中精选）", merged.size(), finalMerged.size());
-                } catch (Exception e) {
-                    // 精排失败不阻断检索，降级使用 RRF 结果
-                    log.warn("Reranker 精排失败，降级使用 RRF 结果: {}", e.getMessage());
-                    // 降级时截取 topK
+                // 通道二：向量检索（top-20）
+                UserEmbeddingConfig embedConfig = embeddingConfigService.getActiveConfig(userId);
+                List<KbChunkSearchResult> vectorResults;
+                if (embedConfig == null) {
+                    log.warn("用户未配置 Embedding AI，向量通道回退到 LIKE 搜索");
+                    vectorResults = timing == null
+                            ? searchKbFallback(kbId, query)
+                            : timing.measureStage("vector_fallback", () -> searchKbFallback(kbId, query));
+                } else {
+                    java.util.function.Supplier<List<KbChunkSearchResult>> vectorSearch = () -> {
+                        AesUtil aes = new AesUtil(aesSecret);
+                        String apiKey = aes.decrypt(embedConfig.getApiKey());
+                        EmbeddingService.EmbeddingResult result = embeddingService.embedBatch(
+                                List.of(query), embedConfig.getBaseUrl(), apiKey,
+                                kb.getEmbeddingModel(), 1024);
+                        float[] queryVector = result.vectors().get(0);
+                        embeddingUsageService.recordUsage(userId, embedConfig.getId(), result.promptTokens());
+                        String vectorStr = EmbeddingService.vectorToString(queryVector);
+                        return chunkMapper.searchByVector(kbId, vectorStr, 20);
+                    };
+                    vectorResults = timing == null
+                            ? vectorSearch.get()
+                            : timing.measureStage("vector", vectorSearch);
+                }
+                log.info("向量通道召回 {} 条", vectorResults.size());
+
+                // RRF 融合排序：候选池取较大值，给 Reranker 足够的精选空间
+                UserRerankerConfig rerankerConfig;
+                boolean hasReranker = (rerankerConfig = rerankerConfigService.getActiveConfig(userId)) != null;
+                int candidateSize = hasReranker ? Math.max(topK * 5, 20) : topK;
+                java.util.function.Supplier<List<KbChunkSearchResult>> merge = () -> rrfRanker.merge(
+                        bm25Results, vectorResults, 60, candidateSize, KbChunkSearchResult::getId);
+                List<KbChunkSearchResult> merged = timing == null
+                        ? merge.get()
+                        : timing.measureStage("rrf", merge);
+                log.info("RRF 融合后返回 {} 条（候选池={}）", merged.size(), candidateSize);
+
+                // 精排：Reranker 交叉编码重排序（仅在用户配置了 Reranker 时执行）
+                if (rerankerConfig != null && !merged.isEmpty()) {
+                    try {
+                        AesUtil aes2 = new AesUtil(aesSecret);
+                        String rerankerApiKey = aes2.decrypt(rerankerConfig.getApiKey());
+                        // 将候选集文本传给 Reranker，index 对应 merged 列表的下标
+                        List<String> texts = merged.stream().map(KbChunkSearchResult::getContent).toList();
+                        java.util.function.Supplier<List<RerankerService.RerankResult>> rerank = () ->
+                                rerankerService.rerank(
+                                        query, texts, rerankerConfig.getBaseUrl(), rerankerApiKey,
+                                        rerankerConfig.getModel(), topK);
+                        List<RerankerService.RerankResult> reranked = timing == null
+                                ? rerank.get()
+                                : timing.measureStage("reranker", rerank);
+                        // 按 Reranker 返回的 index 映射回原始候选集，取 topK
+                        final List<KbChunkSearchResult> finalMerged = merged;
+                        merged = reranked.stream()
+                                .filter(r -> r.index() < finalMerged.size())
+                                .limit(topK)
+                                .map(r -> finalMerged.get(r.index()))
+                                .toList();
+                        log.info("Reranker 精排完成: {} 条（从 {} 条候选中精选）", merged.size(), finalMerged.size());
+                    } catch (Exception e) {
+                        // 精排失败不阻断检索，降级使用 RRF 结果
+                        log.warn("Reranker 精排失败，降级使用 RRF 结果: {}", e.getMessage());
+                        // 降级时截取 topK
+                        if (merged.size() > topK) {
+                            merged = merged.subList(0, topK);
+                        }
+                    }
+                } else {
+                    // 无 Reranker 时直接截取 topK
                     if (merged.size() > topK) {
                         merged = merged.subList(0, topK);
                     }
                 }
-            } else {
-                // 无 Reranker 时直接截取 topK
-                if (merged.size() > topK) {
-                    merged = merged.subList(0, topK);
-                }
-            }
 
-            return merged;
+                return merged;
+            }).doFinally(signal -> finishStage(ragStage, signal.name()));
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * 将 Reactor 终止信号映射为可读的阶段状态。
+     */
+    private static void finishStage(RequestTiming.Stage stage, String signalName) {
+        if (stage == null) return;
+        stage.finish("CANCEL".equals(signalName)
+                ? "CANCELLED"
+                : "ON_ERROR".equals(signalName) ? "ERROR" : "SUCCESS");
+    }
     /**
      * BM25 关键词检索
      * 查询侧走 Jieba 分词 + OR 语义 tsquery，与入库分词保持一致

@@ -1,5 +1,6 @@
 import { useCallback, useRef } from 'react'
 import { useDemoStore } from '@/stores/demoStore'
+import { reportClientError } from '@/utils/errorReporting'
 
 export interface SSEChunk {
   event: string
@@ -44,6 +45,11 @@ export function useSSE() {
     } catch (err) {
       if (controller.signal.aborted) return
       const error = err instanceof Error ? err : new Error(String(err))
+      reportClientError({
+        errorSummary: error.message,
+        errorType: 'SSETransportError',
+        stage: 'sse',
+      })
       onError?.(error)
       throw error
     } finally {

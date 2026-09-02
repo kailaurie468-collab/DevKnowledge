@@ -28,7 +28,8 @@ public class SecurityConfig {
                         .pathMatchers("/api/auth/login", "/api/auth/register", "/api/auth/refresh",
                                 "/api/providers", "/api/frameworks", "/api/frameworks/*/links",
                                 "/api/links/search", "/api/links/web-search",
-                                "/api/demos/generate").permitAll()
+                                "/api/demos/generate", "/api/telemetry/errors",
+                                "/api/feedback").permitAll()
                         .pathMatchers("/api/**").authenticated()
                         .anyExchange().permitAll()
                 )

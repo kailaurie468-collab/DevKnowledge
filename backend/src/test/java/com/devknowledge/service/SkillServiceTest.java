@@ -156,7 +156,6 @@ class SkillServiceTest {
             existing.setVersion(1);
 
             when(skillMapper.selectById(skillId)).thenReturn(existing);
-            when(skillStepService.getStepsBySkillId(skillId)).thenReturn(List.of());
 
             SkillUpdateRequest req = new SkillUpdateRequest();
             req.setName("新名称");

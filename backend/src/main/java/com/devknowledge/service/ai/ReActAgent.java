@@ -1,6 +1,7 @@
 package com.devknowledge.service.ai;
 
 import com.devknowledge.model.UserAiConfig;
+import com.devknowledge.service.SensitiveDataSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -115,7 +116,8 @@ public class ReActAgent {
                     }
                 })
                 .doOnError(e -> {
-                    log.error("AI 调用异常: {}", e.getMessage(), e);
+                    log.error("AI 调用异常: type={}, message={}",
+                            e.getClass().getSimpleName(), SensitiveDataSanitizer.sanitize(e.getMessage()));
                     sink.tryEmitNext(AiChunk.error("AI 调用异常: " + e.getMessage()));
                     sink.tryEmitNext(AiChunk.done());
                     sink.tryEmitComplete();
@@ -244,7 +246,7 @@ public class ReActAgent {
         String fnName = toolCall.getFunctionName();
         String fnArgs = toolCall.getArguments();
         String reasoningContent = toolCall.getReasoningContent();
-        log.info("执行工具: {}({})", fnName, fnArgs);
+        log.info("执行工具: {}, argsLength={}", fnName, fnArgs != null ? fnArgs.length() : 0);
 
         // fnName 为 null 说明 AI 返回了畸形的 tool_call，直接抛异常终止推理
         if (fnName == null || fnName.isBlank()) {
@@ -279,7 +281,8 @@ public class ReActAgent {
 
             return new ToolResult(isEmpty, false);
         } catch (Exception e) {
-            log.error("工具 {} 执行失败: {}", fnName, e.getMessage(), e);
+            log.error("工具 {} 执行失败: type={}, message={}",
+                    fnName, e.getClass().getSimpleName(), SensitiveDataSanitizer.sanitize(e.getMessage()));
             String error = "工具 " + fnName + " 执行失败: " + e.getMessage();
             sink.tryEmitNext(AiChunk.error(error));
             messages.add(new AiProviderAdapter.ChatMessage("user", "错误: " + error));

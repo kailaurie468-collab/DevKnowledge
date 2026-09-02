@@ -77,19 +77,32 @@ public class DemoService {
      * @return SSE 事件流（包含 thought / tool_call / text / done / error）
      */
     public Flux<ServerSentEvent<String>> generateDemo(UUID userId, GenerateDemoRequest req) {
+        return Flux.deferContextual(contextView -> generateDemoWithTiming(
+                userId,
+                req,
+                contextView.getOrDefault(RequestTiming.CONTEXT_KEY, null)));
+    }
+
+    private Flux<ServerSentEvent<String>> generateDemoWithTiming(
+            UUID userId,
+            GenerateDemoRequest req,
+            RequestTiming timing) {
         if (userId == null) {
             return Flux.just(ServerSentEvent.<String>builder()
                     .data("[ERROR]请先登录并配置 AI 服务商").build());
         }
 
-        return Mono.fromCallable(() -> {
-            UserAiConfig config = aiConfigService.getActiveConfigEntity(userId);
-            if (config == null) {
-                throw new RuntimeException("请先在设置页配置 AI 服务商");
-            }
-            AesUtil aes = new AesUtil(aesSecret);
-            config.setApiKey(aes.decrypt(config.getApiKey()));
-            return config;
+        return Mono.defer(() -> {
+            RequestTiming.Stage configStage = timing == null ? null : timing.startStage("ai_config");
+            return Mono.fromCallable(() -> {
+                UserAiConfig config = aiConfigService.getActiveConfigEntity(userId);
+                if (config == null) {
+                    throw new RuntimeException("请先在设置页配置 AI 服务商");
+                }
+                AesUtil aes = new AesUtil(aesSecret);
+                config.setApiKey(aes.decrypt(config.getApiKey()));
+                return config;
+            }).doFinally(signal -> finishStage(configStage, signal.name()));
         }).subscribeOn(Schedulers.boundedElastic())
         .flatMapMany(config -> {
             String systemPromptBase = buildSystemPrompt(req);
@@ -118,14 +131,14 @@ public class DemoService {
                 tools.add(toolProvider.getKbTool());
                 handlers.put("search_kb", toolProvider.getKbHandler(userId, req.getKbId()));
 
-                long startTime = System.currentTimeMillis();
+                long startTime = System.nanoTime();
                 final String finalRagWarning = ragWarning;
 
                 UUID demoId = UUID.randomUUID();
 
                 return kbService.searchKbVector(userId, req.getKbId(), req.getPrompt(), topK)
                         .map(contextChunks -> {
-                            long retrievalMs = System.currentTimeMillis() - startTime;
+                            long retrievalMs = elapsedMillis(startTime);
                             log.info("RAG预检索文档数量: {}", contextChunks.size());
 
                             String promptWithContext = systemPromptBase;
@@ -150,18 +163,28 @@ public class DemoService {
                             return new RagContextResult(promptWithContext, ragMetric, finalRagWarning, demoId);
                         })
                         .onErrorResume(e -> {
-                            log.error("RAG 预检索失败，继续无 RAG 生成: {}", e.getMessage());
+                            log.error("RAG 预检索失败，继续无 RAG 生成: {}",
+                                    SensitiveDataSanitizer.sanitize(e.getMessage()));
                             ragMetric.setRagUsed(false);
                             ragMetric.setDemoId(demoId);
                             return Mono.just(new RagContextResult(systemPromptBase, ragMetric, finalRagWarning, demoId));
                         })
-                        .flatMapMany(ragRes -> runAgent(userId, req, config, ragRes.prompt, tools, handlers, toolCallCounts, ragRes.metric, ragRes.warning, ragRes.demoId));
+                        .flatMapMany(ragRes -> runAgent(userId, req, config, ragRes.prompt, tools,
+                                handlers, toolCallCounts, ragRes.metric, ragRes.warning, ragRes.demoId, timing));
             } else {
                 UUID demoId = UUID.randomUUID();
-                return runAgent(userId, req, config, systemPromptBase, tools, handlers, toolCallCounts, null, null, demoId);
+                return runAgent(userId, req, config, systemPromptBase, tools, handlers,
+                        toolCallCounts, null, null, demoId, timing);
             }
         }).onErrorResume(e -> {
-            String msg = e.getMessage() != null ? e.getMessage() : "生成失败";
+            if (timing != null) {
+                timing.markError(e);
+                timing.markFirstEvent();
+            }
+            String msg = SensitiveDataSanitizer.sanitize(e.getMessage());
+            if (msg.equals("未知错误")) {
+                msg = "生成失败";
+            }
             // 确保错误消息前缀，前端可以正确识别
             if (!msg.startsWith("[ERROR]")) msg = "[ERROR]" + msg;
             return Flux.just(errorEvent(msg));
@@ -172,14 +195,24 @@ public class DemoService {
 
     private Flux<ServerSentEvent<String>> runAgent(UUID userId, GenerateDemoRequest req, UserAiConfig config,
                                                    String systemPrompt, List<AiFunction> tools, Map<String, ToolHandler> handlers,
-                                                   Map<String, AtomicInteger> toolCallCounts, RagMetric finalRagMetric, String finalRagWarning, UUID demoId) {
+                                                   Map<String, AtomicInteger> toolCallCounts, RagMetric finalRagMetric,
+                                                   String finalRagWarning, UUID demoId, RequestTiming timing) {
         StringBuilder outputCollector = new StringBuilder();
         int maxIter = req.getMaxIterations() != null ? req.getMaxIterations() : 5;
 
-        Flux<ServerSentEvent<String>> agentFlux = reactAgent.run(systemPrompt, req.getPrompt(), tools, handlers, config, maxIter, toolCallCounts)
+        Flux<AiChunk> aiFlux = Flux.defer(() -> {
+            RequestTiming.Stage llmStage = timing == null ? null : timing.startStage("llm_generation");
+            return reactAgent.run(systemPrompt, req.getPrompt(), tools, handlers, config, maxIter, toolCallCounts)
+                    .doFinally(signal -> finishStage(llmStage, signal.name()));
+        });
+
+        Flux<ServerSentEvent<String>> agentFlux = aiFlux
                 .map(chunk -> {
                     if (chunk.getType() == AiChunkType.TEXT && chunk.getContent() != null) {
                         outputCollector.append(chunk.getContent());
+                    }
+                    if (chunk.getType() == AiChunkType.ERROR && timing != null) {
+                        timing.markLogicalError("AI_ERROR", chunk.getContent());
                     }
 
                     String eventType = switch (chunk.getType()) {
@@ -232,9 +265,15 @@ public class DemoService {
                     .event("warning")
                     .data(finalRagWarning)
                     .build();
-            return Flux.just(warnEvent).concatWith(agentFlux);
+            agentFlux = Flux.just(warnEvent).concatWith(agentFlux);
         }
-        return agentFlux;
+        return agentFlux.doOnNext(event -> {
+            if (timing == null) return;
+            timing.markFirstEvent();
+            if ("text".equals(event.event())) {
+                timing.markFirstText();
+            }
+        });
     }
 
     /** 构建 SSE error 事件 */
@@ -243,6 +282,20 @@ public class DemoService {
                 .event("error")
                 .data(message)
                 .build();
+    }
+
+    private static long elapsedMillis(long startNanos) {
+        return Math.max(0, (System.nanoTime() - startNanos) / 1_000_000);
+    }
+
+    /**
+     * 将 Reactor 终止信号映射为阶段状态，确保异常和取消也能被观测。
+     */
+    private static void finishStage(RequestTiming.Stage stage, String signalName) {
+        if (stage == null) return;
+        stage.finish("CANCEL".equals(signalName)
+                ? "CANCELLED"
+                : "ON_ERROR".equals(signalName) ? "ERROR" : "SUCCESS");
     }
 
     /**

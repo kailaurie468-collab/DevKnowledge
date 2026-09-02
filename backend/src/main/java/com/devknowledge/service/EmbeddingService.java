@@ -96,18 +96,12 @@ public class EmbeddingService {
 
         } catch (WebClientResponseException e) {
             int status = e.getStatusCode().value();
-            String responseBody = e.getResponseBodyAsString();
-            // 截取前 500 字符，避免日志过长
-            String bodyPreview = responseBody.length() > 500
-                    ? responseBody.substring(0, 500) + "...(truncated)"
-                    : responseBody;
-            log.error("Embedding API 响应异常 [{}]: body={}, headers={}",
-                    status, bodyPreview, e.getHeaders().getContentType());
-            throw new RuntimeException("Embedding API 错误 [" + status + "]: " + bodyPreview);
+            log.error("Embedding API 响应异常 [{}]: contentType={}",
+                    status, e.getHeaders().getContentType());
+            throw new RuntimeException("Embedding API 错误 [" + status + "]");
         } catch (Exception e) {
-            log.error("Embedding 调用失败: {} (异常类型: {})",
-                    e.getMessage(), e.getClass().getName(), e);
-            throw new RuntimeException("Embedding 调用失败: " + e.getMessage(), e);
+            log.error("Embedding 调用失败: type={}", e.getClass().getName());
+            throw new RuntimeException("Embedding 调用失败", e);
         }
     }
 
