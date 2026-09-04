@@ -8,7 +8,9 @@ import com.devknowledge.service.WikiFileService;
 import com.devknowledge.service.WikiGraphService;
 import com.devknowledge.service.WikiIngestService;
 import com.devknowledge.service.WikiLlmService;
+import com.devknowledge.mapper.WikiDocumentMapper;
 import com.devknowledge.mapper.WikiEntityMapper;
+import com.devknowledge.model.WikiDocument;
 import com.devknowledge.model.WikiEntity;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +38,7 @@ public class WikiController {
     private final WikiGraphService wikiGraphService;
     private final WikiLlmService wikiLlmService;
     private final WikiEntityMapper wikiEntityMapper;
+    private final WikiDocumentMapper wikiDocumentMapper;
     private final JwtTokenProvider jwtTokenProvider;
 
     /**
@@ -61,7 +64,10 @@ public class WikiController {
                     resp.setDocId(doc.getId());
                     resp.setFilename(doc.getFilename());
                     resp.setStatus(doc.getStatus());
-                    resp.setMessage("文档上传成功，正在处理");
+                    // 摄取失败（如未配置 AI）时返回真实原因，前端据此提示
+                    resp.setMessage("error".equals(doc.getStatus())
+                            ? "文档处理失败: " + doc.getErrorMsg()
+                            : "文档上传成功，正在处理");
                     return ResponseEntity.ok(resp);
                 }))
                 .onErrorResume(e -> {
@@ -100,6 +106,9 @@ public class WikiController {
                                 resp.setDocId(doc.getId());
                                 resp.setFilename(doc.getFilename());
                                 resp.setStatus(doc.getStatus());
+                                resp.setMessage("error".equals(doc.getStatus())
+                                        ? "文档处理失败: " + doc.getErrorMsg()
+                                        : "摄取完成");
                                 return resp;
                             });
                 }, 3)
@@ -142,6 +151,39 @@ public class WikiController {
 
         return wikiGraphService.getIndexEntries(userId, category)
                 .map(ResponseEntity::ok);
+    }
+
+    /**
+     * 获取用户的文档列表（含摄取失败的文档，供前端展示错误与重试）
+     */
+    @GetMapping("/documents")
+    public Mono<ResponseEntity<List<Map<String, Object>>>> getDocuments(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestParam(required = false) String status) {
+        UUID userId = extractUserId(authHeader);
+        if (userId == null) return Mono.just(ResponseEntity.status(401).build());
+
+        return Mono.fromCallable(() -> {
+            LambdaQueryWrapper<WikiDocument> wrapper =
+                    new LambdaQueryWrapper<WikiDocument>()
+                            .eq(WikiDocument::getUserId, userId)
+                            .orderByDesc(WikiDocument::getCreatedAt);
+            // 默认只查失败的；status=all 返回全部
+            if (status == null || !status.equals("all")) {
+                wrapper.eq(WikiDocument::getStatus, "error");
+            }
+            return wikiDocumentMapper.selectList(wrapper).stream()
+                    .map(doc -> {
+                        Map<String, Object> item = new LinkedHashMap<>();
+                        item.put("docId", doc.getId());
+                        item.put("filename", doc.getFilename());
+                        item.put("status", doc.getStatus());
+                        item.put("errorMsg", doc.getErrorMsg());
+                        item.put("createdAt", doc.getCreatedAt());
+                        return item;
+                    })
+                    .collect(Collectors.toList());
+        }).subscribeOn(Schedulers.boundedElastic()).map(ResponseEntity::ok);
     }
 
     /**

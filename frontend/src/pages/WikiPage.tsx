@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { wikiApi } from '@/api/wiki'
 import { WikiUpload } from '@/components/wiki/WikiUpload'
 import { WikiGraph3D } from '@/components/wiki/WikiGraph3D'
-import type { WikiIndexEntry, WikiGraphData, WikiLintResult } from '@/types/wiki'
+import type { WikiIndexEntry, WikiGraphData, WikiLintResult, WikiFailedDocument } from '@/types/wiki'
 
 export function WikiPage() {
   const [pages, setPages] = useState<WikiIndexEntry[]>([])
@@ -17,11 +17,13 @@ export function WikiPage() {
   const [lintResult, setLintResult] = useState<WikiLintResult | null>(null)
   const [linting, setLinting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [failedDocs, setFailedDocs] = useState<WikiFailedDocument[]>([])
 
   // 加载页面列表和图谱数据
   useEffect(() => {
     loadPages()
     loadGraph()
+    loadFailedDocs()
   }, [])
 
   const loadPages = useCallback(async () => {
@@ -65,23 +67,46 @@ export function WikiPage() {
     }
   }
 
+  // 加载摄取失败的文档（错误必须可见，否则用户不知道上传失败了）
+  const loadFailedDocs = useCallback(async () => {
+    try {
+      const docs = await wikiApi.getFailedDocuments()
+      setFailedDocs(docs)
+    } catch (err) {
+      console.error('加载失败文档列表失败:', err)
+    }
+  }, [])
+
   // 上传成功回调（接收 WikiUploadResponse 参数但仅用于触发刷新）
   const handleUploadSuccess = (_result?: unknown) => {
     loadPages()
     loadGraph()
+    loadFailedDocs()
   }
 
-  // 深度分析
+  // 深度分析（也用于失败文档重试：重跑 LLM 分析）
   const handleAnalyze = async (docId: string) => {
     try {
       setAnalyzing(true)
       await wikiApi.analyzeDocument(docId)
       loadPages()
       loadGraph()
+      loadFailedDocs()
     } catch (err) {
       console.error('分析失败:', err)
     } finally {
       setAnalyzing(false)
+    }
+  }
+
+  // 删除失败文档
+  const handleDeleteFailed = async (docId: string, filename: string) => {
+    if (!confirm(`确定要删除失败文档「${filename}」吗？`)) return
+    try {
+      await wikiApi.deleteDocument(docId)
+      loadFailedDocs()
+    } catch (err) {
+      console.error('删除失败:', err)
     }
   }
 
@@ -137,6 +162,43 @@ export function WikiPage() {
         <div className="p-3 border-b border-gray-200 dark:border-gray-700">
           <WikiUpload onUploadSuccess={handleUploadSuccess} />
         </div>
+
+        {/* 摄取失败的文档：错误原因 + 重试 / 删除 */}
+        {failedDocs.length > 0 && (
+          <div className="p-3 border-b border-gray-200 dark:border-gray-700 space-y-2">
+            <p className="text-xs font-medium text-red-600 dark:text-red-400">
+              {failedDocs.length} 个文档处理失败
+            </p>
+            {failedDocs.map(doc => (
+              <div
+                key={doc.docId}
+                className="rounded-md bg-red-50 dark:bg-red-900/20 px-2 py-1.5 text-xs"
+              >
+                <p className="text-gray-900 dark:text-gray-100 truncate" title={doc.filename}>
+                  {doc.filename}
+                </p>
+                <p className="text-red-600 dark:text-red-400 mt-0.5 line-clamp-2" title={doc.errorMsg}>
+                  {doc.errorMsg || '未知错误'}
+                </p>
+                <div className="flex gap-2 mt-1">
+                  <button
+                    onClick={() => handleAnalyze(doc.docId)}
+                    disabled={analyzing}
+                    className="text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50"
+                  >
+                    {analyzing ? '重试中...' : '重试'}
+                  </button>
+                  <button
+                    onClick={() => handleDeleteFailed(doc.docId, doc.filename)}
+                    className="text-gray-500 hover:text-red-600 dark:hover:text-red-400"
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* 分类筛选 */}
         <div className="p-2 border-b border-gray-200 dark:border-gray-700">

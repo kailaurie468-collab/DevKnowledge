@@ -22,7 +22,12 @@ export function WikiUpload({ onUploadSuccess }: WikiUploadProps) {
 
     try {
       const result = await wikiApi.uploadDocument(file)
-      onUploadSuccess(result)
+      // 后端对摄取失败也返回 200 + status=error，必须显式提示，否则用户看不到任何反馈
+      if (result.status === 'error') {
+        setError(result.message || '文档处理失败')
+      } else {
+        onUploadSuccess(result)
+      }
       if (fileInputRef.current) fileInputRef.current.value = ''
     } catch (err) {
       setError(err instanceof Error ? err.message : '上传失败')
@@ -46,7 +51,15 @@ export function WikiUpload({ onUploadSuccess }: WikiUploadProps) {
         return
       }
       const results = await wikiApi.uploadVault(mdFiles)
-      results.forEach(r => onUploadSuccess(r))
+      // 部分文件摄取失败时：失败的显式提示，成功的正常刷新
+      const failed = results.filter(r => r.status === 'error')
+      if (failed.length > 0) {
+        setError(`${failed.length} 个文件处理失败：${failed[0].message || '未知错误'}`)
+      }
+      const succeeded = results.filter(r => r.status !== 'error')
+      if (succeeded.length > 0) {
+        succeeded.forEach(r => onUploadSuccess(r))
+      }
       if (vaultInputRef.current) vaultInputRef.current.value = ''
     } catch (err) {
       setError(err instanceof Error ? err.message : '上传失败')

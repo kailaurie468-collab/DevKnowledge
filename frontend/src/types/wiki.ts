@@ -75,6 +75,15 @@ export interface WikiUploadResponse {
   message: string
 }
 
+/** 摄取失败的文档（供前端展示错误原因与重试） */
+export interface WikiFailedDocument {
+  docId: string
+  filename: string
+  status: string
+  errorMsg?: string
+  createdAt: string
+}
+
 export interface WikiLintResult {
   contradictions: string[]
   orphanPages: string[]

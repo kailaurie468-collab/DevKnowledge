@@ -4,6 +4,7 @@ import type {
   WikiIndexEntry,
   WikiGraphData,
   WikiLintResult,
+  WikiFailedDocument,
 } from '@/types/wiki'
 
 /**
@@ -74,6 +75,11 @@ export const wikiApi = {
     const params = category ? `?category=${category}` : ''
     return api.get<WikiIndexEntry[]>(`/wiki/pages${params}`)
   },
+
+  /**
+   * 获取摄取失败的文档列表（默认只查 error 状态）
+   */
+  getFailedDocuments: () => api.get<WikiFailedDocument[]>('/wiki/documents'),
 
   /**
    * 读取页面内容（返回纯文本，不能用 api 客户端的 JSON 解析）
