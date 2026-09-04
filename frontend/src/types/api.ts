@@ -267,6 +267,14 @@ export interface RagMetric {
   avgSimilarity: number
   maxSimilarity: number
   minSimilarity: number
+  /** BM25 通道召回条数（V22 起记录；旧数据为空） */
+  bm25Count?: number
+  /** 向量通道召回条数（V22 起记录；旧数据为空） */
+  vectorCount?: number
+  /** RRF 融合后返回条数（V22 起记录；旧数据为空） */
+  mergedCount?: number
+  /** 是否经过 Reranker 精排（V22 起记录） */
+  rerankUsed?: boolean
   retrievalMs: number
   toolCallCount: number
   createdAt: string

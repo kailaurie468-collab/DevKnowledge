@@ -136,15 +136,19 @@ public class DemoService {
 
                 UUID demoId = UUID.randomUUID();
 
-                return kbService.searchKbVector(userId, req.getKbId(), req.getPrompt(), topK)
-                        .map(contextChunks -> {
+                return kbService.searchKbVectorWithStats(userId, req.getKbId(), req.getPrompt(), topK)
+                        .map(outcome -> {
+                            List<KbChunkSearchResult> contextChunks = outcome.results();
                             long retrievalMs = elapsedMillis(startTime);
-                            log.info("RAG预检索文档数量: {}", contextChunks.size());
+                            log.info("RAG预检索文档数量: {}（BM25={}, 向量={}, 融合={}, 精排={}）",
+                                    contextChunks.size(), outcome.bm25Count(), outcome.vectorCount(),
+                                    outcome.mergedCount(), outcome.rerankUsed());
 
                             String promptWithContext = systemPromptBase;
                             if (contextChunks != null && !contextChunks.isEmpty()) {
                                 promptWithContext += buildRagContext(contextChunks);
 
+                                // 相似度口径：KbService 已把结果分数替换为向量通道余弦相似度
                                 double avgSim = contextChunks.stream().mapToDouble(KbChunkSearchResult::getScore).average().orElse(0);
                                 double maxSim = contextChunks.stream().mapToDouble(KbChunkSearchResult::getScore).max().orElse(0);
                                 double minSim = contextChunks.stream().mapToDouble(KbChunkSearchResult::getScore).min().orElse(0);
@@ -159,6 +163,11 @@ public class DemoService {
                                 ragMetric.setRagUsed(false);
                                 ragMetric.setRetrievalMs((int) retrievalMs);
                             }
+                            // 通道明细（V22 指标列）
+                            ragMetric.setBm25Count(outcome.bm25Count());
+                            ragMetric.setVectorCount(outcome.vectorCount());
+                            ragMetric.setMergedCount(outcome.mergedCount());
+                            ragMetric.setRerankUsed(outcome.rerankUsed());
                             ragMetric.setDemoId(demoId);
                             return new RagContextResult(promptWithContext, ragMetric, finalRagWarning, demoId);
                         })
@@ -553,6 +562,10 @@ public class DemoService {
             r.setAvgSimilarity(m.getAvgSimilarity());
             r.setMaxSimilarity(m.getMaxSimilarity());
             r.setMinSimilarity(m.getMinSimilarity());
+            r.setBm25Count(m.getBm25Count());
+            r.setVectorCount(m.getVectorCount());
+            r.setMergedCount(m.getMergedCount());
+            r.setRerankUsed(m.getRerankUsed());
             r.setRetrievalMs(m.getRetrievalMs());
             r.setToolCallCount(m.getToolCallCount());
             r.setCreatedAt(m.getCreatedAt());

@@ -305,6 +305,16 @@
 - **Auth Required:** Yes
 - **Response (200 OK):** 返回匹配的文档片段列表。
 
+### 6.4 RAG 检索指标
+- **URL:** `/api/settings/rag-metrics`（设置子页面「RAG 指标」使用）
+- **Method:** `GET`
+- **Auth Required:** Yes
+- **Response (200 OK):** 最近 7 天 RAG 检索记录，字段含：
+  - `avgSimilarity` / `maxSimilarity` / `minSimilarity` — **V22 起为向量通道余弦相似度**；历史数据为 RRF 排名分（约 0.016），口径不同，前端按 `vectorCount` 是否为空区分
+  - `bm25Count` / `vectorCount` / `mergedCount` — 两通道各自召回条数与融合后条数（V22 起记录，旧数据为 null）
+  - `rerankUsed` — 本次检索是否经过 Reranker 精排
+  - 其余：`topK` / `chunkCount` / `retrievalMs` / `toolCallCount` 等
+
 ---
 
 ## 7. 错误上报与用户反馈

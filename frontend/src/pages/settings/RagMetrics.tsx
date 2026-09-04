@@ -16,8 +16,10 @@ export function RagMetrics() {
 
   // 计算概览指标
   const ragUsedMetrics = metrics.filter(m => m.ragUsed)
-  const avgSimilarity = ragUsedMetrics.length > 0
-    ? ragUsedMetrics.reduce((sum, m) => sum + (m.avgSimilarity || 0), 0) / ragUsedMetrics.length
+  // V22 起相似度为向量余弦口径；旧数据是 RRF 排名分（~0.016），混算会拉低真实值
+  const newMetrics = ragUsedMetrics.filter(m => m.vectorCount != null)
+  const avgSimilarity = newMetrics.length > 0
+    ? newMetrics.reduce((sum, m) => sum + (m.avgSimilarity || 0), 0) / newMetrics.length
     : 0
   const avgRetrievalMs = ragUsedMetrics.length > 0
     ? ragUsedMetrics.reduce((sum, m) => sum + (m.retrievalMs || 0), 0) / ragUsedMetrics.length
@@ -25,10 +27,20 @@ export function RagMetrics() {
   const ragUsageRate = metrics.length > 0
     ? (ragUsedMetrics.length / metrics.length) * 100
     : 0
+  // 通道召回均值（仅有通道明细的记录）
+  const avgBm25Count = newMetrics.length > 0
+    ? newMetrics.reduce((sum, m) => sum + (m.bm25Count || 0), 0) / newMetrics.length
+    : 0
+  const avgVectorCount = newMetrics.length > 0
+    ? newMetrics.reduce((sum, m) => sum + (m.vectorCount || 0), 0) / newMetrics.length
+    : 0
+  const avgMergedCount = newMetrics.length > 0
+    ? newMetrics.reduce((sum, m) => sum + (m.mergedCount || 0), 0) / newMetrics.length
+    : 0
 
-  // 按日期聚合相似度（用于柱状图）
+  // 按日期聚合相似度（趋势图只用新口径，避免与旧 RRF 分数混画）
   const dailySimilarity = new Map<string, number[]>()
-  ragUsedMetrics.forEach(m => {
+  newMetrics.forEach(m => {
     const date = m.createdAt.slice(0, 10)
     if (!dailySimilarity.has(date)) dailySimilarity.set(date, [])
     dailySimilarity.get(date)!.push(m.avgSimilarity || 0)
@@ -53,7 +65,7 @@ export function RagMetrics() {
       {/* 概览卡片 */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800">
-          <p className="text-xs text-gray-500 dark:text-gray-400">平均检索相似度</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">平均相似度（向量余弦）</p>
           <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">
             {(avgSimilarity * 100).toFixed(1)}%
           </p>
@@ -68,6 +80,24 @@ export function RagMetrics() {
           <p className="text-xs text-gray-500 dark:text-gray-400">RAG 使用率</p>
           <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">
             {ragUsageRate.toFixed(0)}%
+          </p>
+        </div>
+        <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800">
+          <p className="text-xs text-gray-500 dark:text-gray-400">BM25 平均召回</p>
+          <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">
+            {avgBm25Count.toFixed(1)} <span className="text-sm font-normal text-gray-400">篇</span>
+          </p>
+        </div>
+        <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800">
+          <p className="text-xs text-gray-500 dark:text-gray-400">向量平均召回</p>
+          <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">
+            {avgVectorCount.toFixed(1)} <span className="text-sm font-normal text-gray-400">篇</span>
+          </p>
+        </div>
+        <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800">
+          <p className="text-xs text-gray-500 dark:text-gray-400">融合后平均结果</p>
+          <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">
+            {avgMergedCount.toFixed(1)} <span className="text-sm font-normal text-gray-400">篇</span>
           </p>
         </div>
       </div>
@@ -138,6 +168,10 @@ export function RagMetrics() {
                   <th className="pb-2 pr-4">Demo</th>
                   <th className="pb-2 pr-4">top-K</th>
                   <th className="pb-2 pr-4">命中数</th>
+                  <th className="pb-2 pr-4">BM25</th>
+                  <th className="pb-2 pr-4">向量</th>
+                  <th className="pb-2 pr-4">最终</th>
+                  <th className="pb-2 pr-4">精排</th>
                   <th className="pb-2 pr-4">相似度</th>
                   <th className="pb-2 pr-4">耗时</th>
                   <th className="pb-2">工具调用</th>
@@ -149,13 +183,32 @@ export function RagMetrics() {
                     <td className="py-2 pr-4 max-w-[200px] truncate text-gray-900 dark:text-gray-100">{m.demoTitle}</td>
                     <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{m.topK}</td>
                     <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{m.chunkCount}</td>
-                    <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{((m.avgSimilarity || 0) * 100).toFixed(1)}%</td>
+                    <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{m.bm25Count ?? '-'}</td>
+                    <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{m.vectorCount ?? '-'}</td>
+                    <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{m.mergedCount ?? '-'}</td>
+                    <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">
+                      {m.rerankUsed == null ? '-' : m.rerankUsed ? '是' : '否'}
+                    </td>
+                    <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">
+                      {m.vectorCount == null ? (
+                        <span title="旧口径数据（RRF 排名分），与向量余弦不可比">
+                          {((m.avgSimilarity || 0) * 100).toFixed(1)}%*
+                        </span>
+                      ) : (
+                        `${((m.avgSimilarity || 0) * 100).toFixed(1)}%`
+                      )}
+                    </td>
                     <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{m.retrievalMs}ms</td>
                     <td className="py-2 text-gray-700 dark:text-gray-300">{m.toolCallCount}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {ragUsedMetrics.some(m => m.vectorCount == null) && (
+              <p className="mt-3 text-xs text-gray-400 dark:text-gray-500">
+                * 旧口径数据：当时相似度记录的是 RRF 排名分（典型值约 1.6%），并非向量余弦相似度，仅供参考。
+              </p>
+            )}
           </div>
         )}
       </div>

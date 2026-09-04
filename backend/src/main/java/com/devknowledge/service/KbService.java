@@ -500,18 +500,35 @@ public class KbService {
 
     // ==================== 向量检索 ====================
 
+    /** 混合检索结果 + 通道统计（RAG 指标用） */
+    public record HybridSearchOutcome(
+            List<KbChunkSearchResult> results,
+            int bm25Count,
+            int vectorCount,
+            int mergedCount,
+            boolean rerankUsed) {
+    }
+
     /**
      * 混合检索知识库（BM25 + 向量 + RRF 融合排序）
      * BM25 和 Embedding 两条通道各召回 top-20，使用 RRF 融合重排后输出 topK 候选集
      */
     public Mono<List<KbChunkSearchResult>> searchKbVector(UUID userId, UUID kbId, String query, int topK) {
+        return searchKbVectorWithStats(userId, kbId, query, topK).map(HybridSearchOutcome::results);
+    }
+
+    /**
+     * 混合检索并返回通道统计（BM25 召回数 / 向量召回数 / 融合后条数 / 是否精排）。
+     * 预检索走这里以便记录 RAG 指标；search_kb 工具二次检索不需要统计。
+     */
+    public Mono<HybridSearchOutcome> searchKbVectorWithStats(UUID userId, UUID kbId, String query, int topK) {
         return Mono.deferContextual(contextView -> {
             RequestTiming timing = contextView.getOrDefault(RequestTiming.CONTEXT_KEY, null);
             RequestTiming.Stage ragStage = timing == null ? null : timing.startStage("rag");
 
             return Mono.fromCallable(() -> {
                 KnowledgeBase kb = kbMapper.selectById(kbId);
-                if (kb == null) return List.<KbChunkSearchResult>of();
+                if (kb == null) return new HybridSearchOutcome(List.of(), 0, 0, 0, false);
 
                 // 通道一：BM25 关键词检索（top-20）
                 // 查询侧必须走与入库同一套 Jieba 分词，否则中文整串无法命中 tsv 中的词项
@@ -549,6 +566,10 @@ public class KbService {
                 }
                 log.info("向量通道召回 {} 条", vectorResults.size());
 
+                // 向量通道余弦相似度（RAG 指标的真实相似度口径；空结果为 null）
+                Double vectorAvgSim = vectorResults.isEmpty() ? null
+                        : vectorResults.stream().mapToDouble(KbChunkSearchResult::getScore).average().orElse(0);
+
                 // RRF 融合排序：候选池取较大值，给 Reranker 足够的精选空间
                 UserRerankerConfig rerankerConfig;
                 boolean hasReranker = (rerankerConfig = rerankerConfigService.getActiveConfig(userId)) != null;
@@ -561,6 +582,7 @@ public class KbService {
                 log.info("RRF 融合后返回 {} 条（候选池={}）", merged.size(), candidateSize);
 
                 // 精排：Reranker 交叉编码重排序（仅在用户配置了 Reranker 时执行）
+                boolean rerankUsed = false;
                 if (rerankerConfig != null && !merged.isEmpty()) {
                     try {
                         AesUtil aes2 = new AesUtil(aesSecret);
@@ -581,6 +603,7 @@ public class KbService {
                                 .limit(topK)
                                 .map(r -> finalMerged.get(r.index()))
                                 .toList();
+                        rerankUsed = true;
                         log.info("Reranker 精排完成: {} 条（从 {} 条候选中精选）", merged.size(), finalMerged.size());
                     } catch (Exception e) {
                         // 精排失败不阻断检索，降级使用 RRF 结果
@@ -597,7 +620,30 @@ public class KbService {
                     }
                 }
 
-                return merged;
+                // 相似度口径：用向量通道余弦相似度填充结果分数，RRF 排名分对用户无意义
+                if (vectorAvgSim != null) {
+                    var vectorScoreById = new java.util.HashMap<java.util.UUID, Double>();
+                    vectorResults.forEach(r -> vectorScoreById.put(r.getId(), r.getScore()));
+                    merged = merged.stream()
+                            .map(r -> {
+                                Double sim = vectorScoreById.get(r.getId());
+                                if (sim != null && sim != r.getScore()) {
+                                    var copy = new KbChunkSearchResult();
+                                    copy.setId(r.getId());
+                                    copy.setDocId(r.getDocId());
+                                    copy.setFilename(r.getFilename());
+                                    copy.setChunkIndex(r.getChunkIndex());
+                                    copy.setContent(r.getContent());
+                                    copy.setScore(sim);
+                                    return copy;
+                                }
+                                return r;
+                            })
+                            .toList();
+                }
+
+                return new HybridSearchOutcome(merged, bm25Results.size(), vectorResults.size(),
+                        merged.size(), rerankUsed);
             }).doFinally(signal -> finishStage(ragStage, signal.name()));
         }).subscribeOn(Schedulers.boundedElastic());
     }
