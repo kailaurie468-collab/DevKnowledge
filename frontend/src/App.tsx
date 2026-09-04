@@ -37,7 +37,7 @@ export default function App() {
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="/kb" element={<KbPage />} />
             <Route path="/wiki" element={<WikiPage />} />
-            <Route path="/admin" element={<AdminPage />} />
+            <Route path="/admin/*" element={<AdminPage />} />
 
             {/* 设置嵌套路由 */}
             <Route path="/settings" element={<SettingsPage />}>

@@ -1,5 +1,7 @@
 import { useRef, useState, useEffect } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
+import { FiShield } from 'react-icons/fi'
+import { useAuthStore } from '@/stores/authStore'
 import { LiquidGlass } from '@/components/effects/LiquidGlass'
 
 const links = [
@@ -22,6 +24,7 @@ const settingsChildren = [
 export function Sidebar() {
   const navRef = useRef<HTMLElement>(null)
   const location = useLocation()
+  const isAdmin = useAuthStore(s => s.user?.isAdmin === true)
   const isSettingsActive = location.pathname.startsWith('/settings')
 
   // 路径在 settings 下时默认展开
@@ -107,6 +110,25 @@ export function Sidebar() {
           </div>
         </div>
       </nav>
+
+      {/* 管理员后台入口：仅白名单用户可见 */}
+      {isAdmin && (
+        <div className="mt-auto border-t border-gray-200 dark:border-gray-700 px-2 pt-2">
+          <NavLink
+            to="/admin"
+            className={({ isActive }) =>
+              `flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors duration-200 ${
+                isActive
+                  ? 'text-primary-700 dark:text-primary-400 font-medium'
+                  : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+              }`
+            }
+          >
+            <FiShield className="w-4 h-4" />
+            <span>后台</span>
+          </NavLink>
+        </div>
+      )}
     </aside>
   )
 }

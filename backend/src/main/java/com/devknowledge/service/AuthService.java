@@ -7,6 +7,7 @@ import com.devknowledge.dto.RegisterRequest;
 import com.devknowledge.dto.UserResponse;
 import com.devknowledge.mapper.UserMapper;
 import com.devknowledge.model.User;
+import com.devknowledge.security.AdminAccessService;
 import com.devknowledge.security.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -24,6 +25,7 @@ public class AuthService {
     private final UserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
+    private final AdminAccessService adminAccessService;
 
     public Mono<AuthResponse> register(RegisterRequest req) {
         return Mono.fromCallable(() -> {
@@ -83,6 +85,8 @@ public class AuthService {
             resp.setId(user.getId());
             resp.setEmail(user.getEmail());
             resp.setDisplayName(user.getDisplayName());
+            // 邮箱白名单判定，前端据此渲染后台入口
+            resp.setAdmin(adminAccessService.isAdminEmail(user.getEmail()));
             return resp;
         }).subscribeOn(Schedulers.boundedElastic());
     }

@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 import { ThemeToggle } from '@/components/effects/ThemeToggle'
@@ -46,6 +47,13 @@ export function Layout() {
   const { user, isAuthenticated, logout } = useAuthStore()
   const location = useLocation()
   const isHome = location.pathname === '/'
+
+  // 刷新后 token 还在但 user 丢失（isAdmin 等字段需要重新拉取）
+  useEffect(() => {
+    if (isAuthenticated && !user) {
+      useAuthStore.getState().loadProfile().catch(console.error)
+    }
+  }, [isAuthenticated, user])
 
   const Logo = (
     <Link to="/" className="text-lg font-bold text-primary-600 dark:text-primary-400">

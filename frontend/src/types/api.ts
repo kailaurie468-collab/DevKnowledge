@@ -34,6 +34,8 @@ export interface User {
   id: string
   email: string
   displayName?: string
+  /** 邮箱白名单判定，前端据此渲染后台入口 */
+  isAdmin?: boolean
 }
 
 // Framework

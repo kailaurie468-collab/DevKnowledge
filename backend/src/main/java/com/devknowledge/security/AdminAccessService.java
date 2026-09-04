@@ -37,9 +37,16 @@ public class AdminAccessService {
         }
         try {
             String email = jwtTokenProvider.getEmail(authorization.substring(7));
-            return email != null && adminEmails.contains(email.toLowerCase(Locale.ROOT));
+            return email != null && isAdminEmail(email);
         } catch (Exception ignored) {
             return false;
         }
+    }
+
+    /** 按邮箱判断是否管理员（profile 接口用它给前端渲染后台入口） */
+    public boolean isAdminEmail(String email) {
+        return !adminEmails.isEmpty()
+                && email != null
+                && adminEmails.contains(email.toLowerCase(Locale.ROOT));
     }
 }
