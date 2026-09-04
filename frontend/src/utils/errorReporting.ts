@@ -1,6 +1,8 @@
 export interface ClientErrorPayload {
   requestId?: string
   errorSummary: string
+  /** 完整堆栈（error.stack），后端存 error_detail 列 */
+  errorDetail?: string
   errorType?: string
   stage?: string
   page?: string
@@ -19,6 +21,13 @@ export function reportClientError(payload: ClientErrorPayload) {
   const body = {
     ...payload,
     errorSummary: sanitize(payload.errorSummary),
+    // 堆栈独立脱敏：保留换行（逐行可读），截断上限比摘要宽松
+    errorDetail: payload.errorDetail
+      ? payload.errorDetail
+          .replace(/Bearer\s+[^\s]+/gi, 'Bearer [REDACTED]')
+          .replace(/\b(api[-_ ]?key|password|secret)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]')
+          .slice(0, 16000)
+      : undefined,
     page: payload.page || window.location.pathname,
     appVersion: payload.appVersion || APP_VERSION,
     userAgent: payload.userAgent || navigator.userAgent,

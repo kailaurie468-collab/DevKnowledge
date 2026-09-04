@@ -42,6 +42,7 @@ class ApiClient {
         reportClientError({
           requestId,
           errorSummary: error instanceof Error ? error.message : '网络请求失败',
+          errorDetail: error instanceof Error ? error.stack : undefined,
           errorType: 'NetworkError',
           stage: 'http',
         })
@@ -135,6 +136,7 @@ class ApiClient {
         reportClientError({
           requestId,
           errorSummary: error instanceof Error ? error.message : 'SSE 网络请求失败',
+          errorDetail: error instanceof Error ? error.stack : undefined,
           errorType: 'SSENetworkError',
           stage: 'sse',
         })

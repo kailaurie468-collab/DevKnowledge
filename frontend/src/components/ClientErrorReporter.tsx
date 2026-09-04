@@ -9,7 +9,7 @@ export function ClientErrorReporter() {
   const reportedRef = useRef(new Map<string, number>())
 
   useEffect(() => {
-    const report = (summary: string, errorType: string) => {
+    const report = (summary: string, errorType: string, error?: unknown) => {
       const fingerprint = `${errorType}:${summary}`
       const now = Date.now()
       const lastReportedAt = reportedRef.current.get(fingerprint)
@@ -20,18 +20,26 @@ export function ClientErrorReporter() {
 
       reportClientError({
         errorSummary: summary || '未知前端错误',
+        errorDetail: error instanceof Error ? error.stack : undefined,
         errorType,
         stage: 'frontend',
       })
     }
 
     const handleError = (event: ErrorEvent) => {
-      report(event.error instanceof Error ? event.error.message : event.message, 'UncaughtError')
+      report(
+        event.error instanceof Error ? event.error.message : event.message,
+        'UncaughtError',
+        event.error,
+      )
     }
 
     const handleRejection = (event: PromiseRejectionEvent) => {
-      const reason = event.reason instanceof Error ? event.reason.message : 'UnhandledPromiseRejection'
-      report(reason, 'UnhandledRejection')
+      report(
+        event.reason instanceof Error ? event.reason.message : 'UnhandledPromiseRejection',
+        'UnhandledRejection',
+        event.reason,
+      )
     }
 
     window.addEventListener('error', handleError)

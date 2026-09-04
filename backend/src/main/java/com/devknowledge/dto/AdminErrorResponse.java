@@ -18,6 +18,7 @@ public class AdminErrorResponse {
     private String stage;
     private String errorType;
     private String errorSummary;
+    private String errorDetail;
     private String method;
     private String path;
     private String page;

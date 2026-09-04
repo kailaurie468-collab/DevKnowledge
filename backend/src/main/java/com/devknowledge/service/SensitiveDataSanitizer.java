@@ -9,6 +9,8 @@ import java.util.regex.Pattern;
 public final class SensitiveDataSanitizer {
 
     private static final int MAX_LENGTH = 2000;
+    /** 完整堆栈的最大长度，比摘要宽松以保留完整调用链 */
+    private static final int MAX_DETAIL_LENGTH = 16000;
     private static final Pattern BEARER_PATTERN =
             Pattern.compile("(?i)\\bBearer\\s+[A-Za-z0-9._~+/=-]+");
     private static final Pattern KEY_VALUE_PATTERN =
@@ -34,5 +36,22 @@ public final class SensitiveDataSanitizer {
         return sanitized.length() <= MAX_LENGTH
                 ? sanitized
                 : sanitized.substring(0, MAX_LENGTH) + "...";
+    }
+
+    /**
+     * 脱敏完整堆栈。与 sanitize 的区别：保留换行（堆栈逐行可读）、上限 16000、
+     * 空值返回 null（error_detail 列允许 NULL，代表无堆栈）。
+     */
+    public static String sanitizeDetail(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+
+        String sanitized = BEARER_PATTERN.matcher(value).replaceAll("Bearer [REDACTED]");
+        sanitized = KEY_VALUE_PATTERN.matcher(sanitized).replaceAll("$1=[REDACTED]");
+        sanitized = JSON_KEY_PATTERN.matcher(sanitized).replaceAll("$1[REDACTED]$2");
+        return sanitized.length() <= MAX_DETAIL_LENGTH
+                ? sanitized
+                : sanitized.substring(0, MAX_DETAIL_LENGTH) + "...";
     }
 }

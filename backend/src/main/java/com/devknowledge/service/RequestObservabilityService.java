@@ -80,6 +80,7 @@ public class RequestObservabilityService {
                         report.setStage(lastStage(snapshot));
                         report.setErrorType(snapshot.errorCode());
                         report.setErrorSummary(SensitiveDataSanitizer.sanitize(snapshot.errorMessage()));
+                        report.setErrorDetail(SensitiveDataSanitizer.sanitizeDetail(snapshot.errorStackTrace()));
                         report.setMethod(snapshot.method());
                         report.setPath(snapshot.path());
                         report.setAppVersion(snapshot.clientVersion());
@@ -106,6 +107,7 @@ public class RequestObservabilityService {
      */
     public Mono<Void> reportError(ErrorReport report) {
         report.setErrorSummary(SensitiveDataSanitizer.sanitize(report.getErrorSummary()));
+        report.setErrorDetail(SensitiveDataSanitizer.sanitizeDetail(report.getErrorDetail()));
         return Mono.fromRunnable(() -> errorReportMapper.insert(report))
                 .subscribeOn(Schedulers.boundedElastic())
                 .doOnSuccess(unused -> notificationService.sendAsync(

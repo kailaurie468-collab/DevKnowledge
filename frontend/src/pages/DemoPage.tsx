@@ -193,6 +193,7 @@ export function DemoPage() {
       <div className="mb-6 space-y-3">
         {/* 输入区 */}
         <textarea
+          data-tour="demo-prompt"
           value={prompt}
           onChange={e => setPrompt(e.target.value)}
           placeholder="描述你想要的代码... 例如 React useEffect 发起 API 请求并处理加载状态"

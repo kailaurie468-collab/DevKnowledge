@@ -38,6 +38,7 @@ public class TelemetryController {
         report.setStage(request.getStage());
         report.setErrorType(request.getErrorType());
         report.setErrorSummary(request.getErrorSummary());
+        report.setErrorDetail(request.getErrorDetail());
         report.setPage(request.getPage());
         report.setAppVersion(request.getAppVersion());
         report.setUserAgent(request.getUserAgent());

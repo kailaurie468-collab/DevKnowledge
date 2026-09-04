@@ -20,6 +20,7 @@ export interface AdminError {
   stage?: string
   errorType?: string
   errorSummary: string
+  errorDetail?: string
   method?: string
   path?: string
   page?: string
@@ -54,6 +55,31 @@ export interface AdminRequestTrace {
   createdAt: string
 }
 
+export interface AdminSpan {
+  stage: string
+  status: string
+  durationMs: number
+  createdAt: string
+}
+
+export interface AdminTraceDetail {
+  trace: AdminRequestTrace | null
+  spans: AdminSpan[]
+}
+
+export interface AdminUser {
+  id: string
+  email: string
+  displayName?: string
+  createdAt: string
+  lastActiveAt?: string
+  totalTokens: number
+  demoCount: number
+  feedbackCount: number
+}
+
+export type FeedbackStatus = 'NEW' | 'IN_PROGRESS' | 'RESOLVED'
+
 export interface AdminPageResponse<T> {
   items: T[]
   page: number
@@ -72,5 +98,20 @@ export const adminApi = {
       size: String(size),
     }),
   errors: (limit = 50) => api.get<AdminError[]>('/admin/errors', { limit: String(limit) }),
-  feedback: (limit = 50) => api.get<AdminFeedback[]>('/admin/feedback', { limit: String(limit) }),
+  errorDetail: (id: string) => api.get<AdminError>(`/admin/errors/${id}`),
+  traceDetail: (requestId: string) =>
+    api.get<AdminTraceDetail>('/admin/traces/detail', { requestId }),
+  users: (page = 1, size = 20) =>
+    api.get<AdminPageResponse<AdminUser>>('/admin/users', {
+      page: String(page),
+      size: String(size),
+    }),
+  feedback: (page = 1, size = 20, status?: FeedbackStatus) =>
+    api.get<AdminPageResponse<AdminFeedback>>('/admin/feedback', {
+      page: String(page),
+      size: String(size),
+      ...(status ? { status } : {}),
+    }),
+  updateFeedbackStatus: (id: string, status: FeedbackStatus) =>
+    api.patch(`/admin/feedback/${id}/status`, { status }),
 }

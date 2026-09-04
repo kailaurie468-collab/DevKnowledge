@@ -201,6 +201,7 @@ export function AiSettings() {
               </div>
             ))}
             <button
+              data-tour="ai-add-btn"
               onClick={handleNew}
               className="w-full p-3 border border-dashed border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-500 dark:text-gray-400 hover:border-primary-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
             >
