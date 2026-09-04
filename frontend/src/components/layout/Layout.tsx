@@ -3,6 +3,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { ThemeToggle } from '@/components/effects/ThemeToggle'
 import CardNav, { CardNavItem } from '@/components/effects/CardNav'
 import { FeedbackDialog } from '@/components/FeedbackDialog'
+import { GuidedTour } from '@/components/tour/GuidedTour'
 import { Header } from './Header'
 import { Sidebar } from './Sidebar'
 
@@ -98,6 +99,9 @@ export function Layout() {
           <Outlet />
         </main>
       </div>
+
+      {/* 首次使用引导（挂在 Layout 内：功能页与首页都在，触发条件在组件内判断） */}
+      <GuidedTour />
     </div>
   )
 }

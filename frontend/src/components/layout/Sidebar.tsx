@@ -33,7 +33,7 @@ export function Sidebar() {
   }, [isSettingsActive])
 
   return (
-    <aside className="w-56 border-r border-gray-200 bg-gray-50 dark:bg-gray-900 dark:border-gray-700 flex flex-col py-4 transition-colors">
+    <aside data-tour="sidebar" className="w-56 border-r border-gray-200 bg-gray-50 dark:bg-gray-900 dark:border-gray-700 flex flex-col py-4 transition-colors">
       <nav ref={navRef} className="relative flex flex-col gap-1 px-2">
         {/* 液态玻璃覆盖层 */}
         <LiquidGlass

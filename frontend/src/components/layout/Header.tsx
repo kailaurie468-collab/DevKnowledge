@@ -1,10 +1,13 @@
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
+import { FiHelpCircle } from 'react-icons/fi'
 import { useAuthStore } from '@/stores/authStore'
+import { useTourStore } from '@/stores/tourStore'
 import { ThemeToggle } from '@/components/effects/ThemeToggle'
 import { FeedbackDialog } from '@/components/FeedbackDialog'
 
 export function Header() {
   const { user, isAuthenticated, logout } = useAuthStore()
+  const location = useLocation()
 
   return (
     <header className="h-14 border-b border-gray-200 bg-white/80 dark:bg-gray-900/60 backdrop-blur-md dark:border-gray-700 flex items-center justify-between px-4 transition-colors relative z-20">
@@ -13,6 +16,14 @@ export function Header() {
       </Link>
 
       <nav className="flex items-center gap-4">
+        {/* 引导重看入口：不检查 localStorage，随时从头看 */}
+        <button
+          onClick={() => useTourStore.getState().start(location.pathname)}
+          title="重看使用引导"
+          className="text-gray-400 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+        >
+          <FiHelpCircle className="w-5 h-5" />
+        </button>
         <ThemeToggle />
         <FeedbackDialog />
         {isAuthenticated ? (
