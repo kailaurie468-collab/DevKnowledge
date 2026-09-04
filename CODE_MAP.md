@@ -201,6 +201,8 @@ DevKnowledge/
 | `frontend/src/hooks/useSSE.ts` | ★★★ | SSE Hook，使用 demoStore 全局状态 |
 | `frontend/src/stores/demoStore.ts` | ★★★ | Demo 全局状态，切换页面内容不丢失 |
 | `frontend/src/stores/authStore.ts` | ★★☆ | 认证状态，token 管理 + 记住我 |
+| `frontend/src/components/tour/GuidedTour.tsx` | ★★☆ | 首次使用引导编排器（driver.js 聚光灯 + 跨页导航 + 降级兜底） |
+| `backend/.../service/AdminHousekeepingService.java` | ★★☆ | 观测数据保留策略（traces 14 天定时清理） |
 | `backend/.../security/JwtTokenProvider.java` | ★★★ | JWT 生成/解析，所有认证的基础 |
 | `backend/.../security/AesUtil.java` | ★★★ | API Key 加密/脱敏 |
 | `backend/.../service/ai/ReActAgent.java` | ★★★ | ReAct 多轮推理引擎 |

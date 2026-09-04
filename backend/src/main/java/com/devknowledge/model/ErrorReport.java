@@ -29,6 +29,9 @@ public class ErrorReport {
     private String stage;
     private String errorType;
     private String errorSummary;
+
+    /** 完整堆栈/上下文（脱敏后），列表页不返回此字段 */
+    private String errorDetail;
     private String method;
     private String path;
     private String page;

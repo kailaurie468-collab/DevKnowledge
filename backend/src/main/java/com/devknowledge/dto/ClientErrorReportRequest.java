@@ -18,6 +18,9 @@ public class ClientErrorReportRequest {
     @Size(max = 2000)
     private String errorSummary;
 
+    @Size(max = 16000)
+    private String errorDetail;
+
     @Size(max = 128)
     private String errorType;
 

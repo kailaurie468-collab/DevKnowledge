@@ -57,6 +57,10 @@ kb:
   raw-file:
     storage-path: raw_files
 
+observability:
+  # request_traces / request_spans 保留天数，error_reports 与 user_feedback 永久保留
+  trace-retention-days: 14
+
 app:
   # 管理后台使用邮箱白名单鉴权，多个邮箱用逗号分隔
   admin:

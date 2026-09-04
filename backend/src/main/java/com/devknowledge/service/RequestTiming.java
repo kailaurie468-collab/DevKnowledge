@@ -31,6 +31,7 @@ public final class RequestTiming {
 
     private volatile String logicalErrorCode;
     private volatile String logicalErrorMessage;
+    private volatile String logicalErrorStackTrace;
 
     public RequestTiming(
             String requestId,
@@ -77,7 +78,28 @@ public final class RequestTiming {
         if (error != null && logicalErrorCode == null) {
             logicalErrorCode = error.getClass().getSimpleName();
             logicalErrorMessage = error.getMessage();
+            logicalErrorStackTrace = renderStackTrace(error);
         }
+    }
+
+    /** 异常堆栈序列化为多行字符串（含 cause 链，最多 5 层防超长） */
+    private static String renderStackTrace(Throwable error) {
+        StringBuilder sb = new StringBuilder();
+        Throwable current = error;
+        int depth = 0;
+        while (current != null && depth < 5) {
+            if (depth > 0) {
+                sb.append("\nCaused by: ");
+            }
+            sb.append(current.getClass().getName());
+            sb.append(": ").append(current.getMessage()).append('\n');
+            for (StackTraceElement element : current.getStackTrace()) {
+                sb.append("\tat ").append(element.toString()).append('\n');
+            }
+            current = current.getCause();
+            depth++;
+        }
+        return sb.toString();
     }
 
     /**
@@ -112,9 +134,11 @@ public final class RequestTiming {
             UUID userId) {
         String errorCode = logicalErrorCode;
         String errorMessage = logicalErrorMessage;
+        String errorStackTrace = logicalErrorStackTrace;
         if (error != null) {
             errorCode = error.getClass().getSimpleName();
             errorMessage = error.getMessage();
+            errorStackTrace = renderStackTrace(error);
         }
 
         String outcome = requestedOutcome;
@@ -136,6 +160,7 @@ public final class RequestTiming {
                 elapsedSinceStart(firstTextAtNanos.get()),
                 errorCode,
                 errorMessage,
+                errorStackTrace,
                 userAgent,
                 clientVersion,
                 List.copyOf(spans),
@@ -197,6 +222,7 @@ public final class RequestTiming {
             Long firstTextMs,
             String errorCode,
             String errorMessage,
+            String errorStackTrace,
             String userAgent,
             String clientVersion,
             List<StageSnapshot> spans,

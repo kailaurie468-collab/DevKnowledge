@@ -344,10 +344,16 @@
 - **返回:** 用户数、累计 Token、请求数、成功率、平均/P95 耗时、错误数、反馈数。
 
 ### 8.2 错误记录
-- **URL:** `/api/admin/errors?limit=50`
+- **URL:** `/api/admin/errors?limit=50&requestId=xxx`（requestId 可选，按请求 ID 过滤）
 - **Method:** `GET`
 - **Auth Required:** Admin
-- **返回:** 最近的脱敏错误摘要和请求上下文。
+- **返回:** 最近的脱敏错误摘要和请求上下文（不含完整堆栈，列表响应保持轻量）。
+
+### 8.2.1 错误详情
+- **URL:** `/api/admin/errors/{id}`
+- **Method:** `GET`
+- **Auth Required:** Admin
+- **返回:** 单条错误完整信息，含 `errorDetail`（脱敏后的完整堆栈，可空）。
 
 ### 8.3 请求耗时记录
 - **URL:** `/api/admin/traces?page=1&size=20`
@@ -355,11 +361,30 @@
 - **Auth Required:** Admin
 - **返回:** 分页请求记录，包含状态、总耗时、SSE 首事件/首文本耗时、当前页、总条数和总页数。
 
-### 8.4 用户反馈
-- **URL:** `/api/admin/feedback?limit=50`
+### 8.3.1 请求链路详情
+- **URL:** `/api/admin/traces/detail?requestId=xxx`
 - **Method:** `GET`
 - **Auth Required:** Admin
-- **返回:** 最近的用户反馈记录。
+- **返回:** `{ trace: 请求记录|null, spans: [{stage, status, durationMs, createdAt}] }`，用于错误详情抽屉的链路追溯。
+
+### 8.4 用户反馈
+- **URL:** `/api/admin/feedback?page=1&size=20&status=NEW`（status 可选：NEW / IN_PROGRESS / RESOLVED）
+- **Method:** `GET`
+- **Auth Required:** Admin
+- **返回:** 分页反馈记录（AdminPageResponse 结构），支持状态筛选。
+
+### 8.4.1 反馈状态流转
+- **URL:** `/api/admin/feedback/{id}/status`
+- **Method:** `PATCH`
+- **Auth Required:** Admin
+- **Body:** `{ "status": "NEW | IN_PROGRESS | RESOLVED" }`
+- **返回:** 200 成功；404 反馈不存在；400 状态值非法。
+
+### 8.4.2 用户列表
+- **URL:** `/api/admin/users?page=1&size=20`
+- **Method:** `GET`
+- **Auth Required:** Admin
+- **返回:** 分页用户列表，含邮箱、昵称、注册时间、最近活跃时间、累计 Token、Demo 数、反馈数。
 
 ### 8.5 请求链路 Header
 - `X-Request-Id`: 客户端生成合法 UUID 时由服务端复用，否则由 WebFilter 生成。

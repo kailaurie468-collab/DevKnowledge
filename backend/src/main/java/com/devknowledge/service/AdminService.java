@@ -5,6 +5,8 @@ import com.devknowledge.dto.AdminFeedbackResponse;
 import com.devknowledge.dto.AdminOverviewResponse;
 import com.devknowledge.dto.AdminPageResponse;
 import com.devknowledge.dto.AdminRequestTraceResponse;
+import com.devknowledge.dto.AdminTraceDetailResponse;
+import com.devknowledge.dto.AdminUserResponse;
 import com.devknowledge.mapper.AdminMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -72,8 +74,79 @@ public class AdminService {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
-    public Mono<List<AdminFeedbackResponse>> listFeedback(int limit) {
-        return Mono.fromCallable(() -> adminMapper.listFeedback(normalizeLimit(limit)))
+    /** 错误详情（含完整堆栈） */
+    public Mono<AdminErrorResponse> getError(String id) {
+        return Mono.fromCallable(() -> adminMapper.findErrorById(id))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /** 按 requestId 过滤错误列表 */
+    public Mono<List<AdminErrorResponse>> listErrorsByRequestId(String requestId) {
+        return Mono.fromCallable(() -> adminMapper.listErrorsByRequestId(requestId))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /** requestId 对应的请求链路（trace + spans） */
+    public Mono<AdminTraceDetailResponse> getTraceDetail(String requestId) {
+        return Mono.fromCallable(() -> {
+                    AdminTraceDetailResponse detail = new AdminTraceDetailResponse();
+                    detail.setTrace(adminMapper.findTraceByRequestId(requestId));
+                    detail.setSpans(adminMapper.listSpansByRequestId(requestId));
+                    return detail;
+                })
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /** 用户列表（分页，含活跃时间与用量聚合） */
+    public Mono<AdminPageResponse<AdminUserResponse>> listUsers(int page, int size) {
+        return Mono.fromCallable(() -> {
+                    int normalizedSize = normalizePageSize(size);
+                    int requestedPage = Math.max(page, 1);
+                    long total = adminMapper.countUsersForPage();
+                    int totalPages = total == 0
+                            ? 0
+                            : (int) ((total + normalizedSize - 1) / normalizedSize);
+                    int actualPage = totalPages == 0 ? 1 : Math.min(requestedPage, totalPages);
+                    int offset = (actualPage - 1) * normalizedSize;
+                    return new AdminPageResponse<>(
+                            adminMapper.listUsers(offset, normalizedSize),
+                            actualPage,
+                            normalizedSize,
+                            total,
+                            totalPages,
+                            totalPages > 0 && actualPage < totalPages,
+                            actualPage > 1);
+                })
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /** 反馈分页；status 传 null 或空 = 不筛选 */
+    public Mono<AdminPageResponse<AdminFeedbackResponse>> listFeedbackPage(int page, int size, String status) {
+        return Mono.fromCallable(() -> {
+                    String normalizedStatus = (status == null || status.isBlank()) ? null : status;
+                    int normalizedSize = normalizePageSize(size);
+                    int requestedPage = Math.max(page, 1);
+                    long total = adminMapper.countFeedbackByStatus(normalizedStatus);
+                    int totalPages = total == 0
+                            ? 0
+                            : (int) ((total + normalizedSize - 1) / normalizedSize);
+                    int actualPage = totalPages == 0 ? 1 : Math.min(requestedPage, totalPages);
+                    int offset = (actualPage - 1) * normalizedSize;
+                    return new AdminPageResponse<>(
+                            adminMapper.listFeedbackPage(normalizedStatus, offset, normalizedSize),
+                            actualPage,
+                            normalizedSize,
+                            total,
+                            totalPages,
+                            totalPages > 0 && actualPage < totalPages,
+                            actualPage > 1);
+                })
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /** 反馈状态流转；返回更新行数（0 = 反馈不存在） */
+    public Mono<Integer> updateFeedbackStatus(String id, String status) {
+        return Mono.fromCallable(() -> adminMapper.updateFeedbackStatus(id, status))
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
